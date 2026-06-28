@@ -92,29 +92,45 @@ class Database:
 
             return (f'Успешно добавлено {quantity} {product_name} в холодильник')
     
-    def expire_product(self, product_name: str):
+    def expire_product(self):
         with self.cursor() as cursor:
+            today = datetime.now()
             cursor.execute("""
-                SELECT product_name, quantity, expiration_date FROM fridge WHERE expiration_date <= ? AND product_name = ?
-            """, (datetime.now().strftime("%Y-%m-%d"), product_name))
+                SELECT id, product_name, quantity, expiration_date FROM fridge WHERE expiration_date <= ?
+            """, (today.strftime("%Y-%m-%d"),))
             products = cursor.fetchall()
+
+            if products is None:
+                return False
+
             expired_products = []
             expire_today = []
             for product in products:
-                if product[2] < datetime.now().strftime("%Y-%m-%d"):
+                if product[3] < today.strftime("%Y-%m-%d"):
                     expired_products.append(f'{product[0]} - {product[1]} шт.')
-                elif product[2] == datetime.now().strftime("%Y-%m-%d"):
+                elif product[3] == today.strftime("%Y-%m-%d"):
                     expire_today.append(f'{product[0]} - {product[1]} шт.')
-            return (f'Просроченные продукты: {expired_products}, Продукты, которые просрочатся сегодня: {expire_today}')
+            return expired_products, expire_today
 
-    def delete_expired_products(self, any_product: bool = False):
+    def clear_expired_product(self,id, quantity: int):
         with self.cursor() as cursor:
-            if any_product: 
+            cursor.execute("""
+                SELECT quantity FROM fridge WHERE id = ?
+            """, (id,))
+            row = cursor.fetchall
+            if row is None:
+                return False
+            fridge_quantity = row[0]
+            if fridge_quantity - quantity < 0:
+                return False
+            elif fridge_quantity - quantity > 0:
                 cursor.execute("""
-                    DELETE FROM fridge WHERE expiration_date <= ?
-                """, (datetime.now().strftime("%Y-%m-%d")))
-                return (f'Просроченные продукты удалены')
-            else:
+                    UPDATE fridge SET quantity = ? WHERE id = ?
+                """, (quantity, id))
+            else: 
                 cursor.execute("""
-                    DELETE FROM fridge WHERE expiration_date < ?
-                """, (datetime.now().strftime("%Y-%m-%d")))
+                    DELETE FROM fridge WHERE id = ?
+                """, (id,))
+
+
+    
