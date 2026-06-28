@@ -68,7 +68,6 @@ class Database:
                     cursor.execute("""
                         UPDATE freezer SET quantity = ? WHERE product_name = ?
                     """, (freezer_quantity, product_name))
-                    return (f'Успешно добавлено {quantity} {product_name} в холодильник')
             else:
                 return (f'Недостаточно {product_name} в морозильнике')
 
