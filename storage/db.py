@@ -27,8 +27,6 @@ class Database:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 product_name TEXT,
                 quantity INTEGER,
-                date_added TEXT NOT NULL,
-                expiration_date TEXT NOT NULL
             )
         """)
         conn.commit()
@@ -52,7 +50,7 @@ class Database:
         finally:
             conn.close()
     
-    def new_delivery(self, product_name: str, quantity: int):
+    def new_fridge_product(self, product_name: str, quantity: int):
         with self.cursor() as cursor:
 
             cursor.execute("""
@@ -131,6 +129,31 @@ class Database:
                 cursor.execute("""
                     DELETE FROM fridge WHERE id = ?
                 """, (id,))
+
+    def new_delivery(self, product_name: str, quantity: int):
+        with self.cursor() as cursor:
+            cursor.execute("""
+                SELECT quantity FROM feezer WHERE product_name = ?
+            """, (product_name,))
+
+            row = cursor.fetchall()
+            if row is None:
+                cursor.execute("""
+                    INSERT INTO freezer (product_name, quantity)
+                    VALUES (?, ?)
+                """, (product_name, quantity))
+
+                return (f'Успешно добавлено {quantity} {product_name} в морозильник')
+
+            else:
+                cursor.execute("""
+                    UPDATE freezer SET quantity = ? WHERE product_name = ?
+                """, (quantity + row[0], product_name))
+                return (f'Успешно добавлено {quantity} {product_name} в морозильник')
+
+    
+
+            
 
 
     
