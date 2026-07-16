@@ -14,7 +14,7 @@ class Database:
             )
         """)
         conn.execute("""
-            CRATE TABLE IF NOT EXISTS fridge (
+            CREATE TABLE IF NOT EXISTS fridge (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 product_name TEXT,
                 quantity INTEGER,
@@ -26,7 +26,7 @@ class Database:
             CRATE TABLE IF NOT EXISTS freezer (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 product_name TEXT,
-                quantity INTEGER,
+                quantity INTEGER
             )
         """)
         conn.commit()
@@ -74,7 +74,7 @@ class Database:
             """, (product_name,))
             row = cursor.fetchone()
             
-            if row is not None:
+            if row is None:
                 return (f'Продукт {product_name} не найден')
             fridge_storage_time = row[0]
 
@@ -98,16 +98,16 @@ class Database:
             """, (today.strftime("%Y-%m-%d"),))
             products = cursor.fetchall()
 
-            if products is None:
+            if not products:
                 return False
 
             expired_products = []
             expire_today = []
             for product in products:
                 if product[3] < today.strftime("%Y-%m-%d"):
-                    expired_products.append(f'{product[0]} - {product[1]} шт.')
+                    expired_products.append((product[0], product[1], product[2]))
                 elif product[3] == today.strftime("%Y-%m-%d"):
-                    expire_today.append(f'{product[0]} - {product[1]} шт.')
+                    expire_today.append((product[0], product[1], product[2]))
             return expired_products, expire_today
 
     def clear_expired_product(self,id, quantity: int):
@@ -115,7 +115,7 @@ class Database:
             cursor.execute("""
                 SELECT quantity FROM fridge WHERE id = ?
             """, (id,))
-            row = cursor.fetchall
+            row = cursor.fetchone()
             if row is None:
                 return False
             fridge_quantity = row[0]
@@ -124,7 +124,7 @@ class Database:
             elif fridge_quantity - quantity > 0:
                 cursor.execute("""
                     UPDATE fridge SET quantity = ? WHERE id = ?
-                """, (quantity, id))
+                """, (fridge_quantity - quantity, id))
             else: 
                 cursor.execute("""
                     DELETE FROM fridge WHERE id = ?
@@ -133,10 +133,10 @@ class Database:
     def new_delivery(self, product_name: str, quantity: int):
         with self.cursor() as cursor:
             cursor.execute("""
-                SELECT quantity FROM feezer WHERE product_name = ?
+                SELECT quantity FROM freezer WHERE product_name = ?
             """, (product_name,))
 
-            row = cursor.fetchall()
+            row = cursor.fetchone()
             if row is None:
                 cursor.execute("""
                     INSERT INTO freezer (product_name, quantity)
@@ -151,6 +151,21 @@ class Database:
                 """, (quantity + row[0], product_name))
                 return (f'Успешно добавлено {quantity} {product_name} в морозильник')
 
+    def export_fridge(self):
+        with self.cursor() as cursor:
+            cursor.execute("""
+                SELECT id, product_name, quantity, date_added, expiration_date FROM fridge
+            """)
+            products = cursor.fetchall()
+            return products
+
+    def export_freezer(self):
+        with self.cursor() as cursor:
+            cursor.execute("""
+                SELECT product_name, quantity FROM freezer
+            """)
+            products = cursor.fetchall()
+            return products
     
 
             
