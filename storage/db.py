@@ -50,7 +50,7 @@ class Database:
         finally:
             conn.close()
     
-    def new_fridge_product(self, product_name: str, quantity: int):
+    def move_to_fridge(self, product_name: str, quantity: int):
         with self.cursor() as cursor:
 
             cursor.execute("""
@@ -90,7 +90,7 @@ class Database:
 
             return (f'Успешно добавлено {quantity} {product_name} в холодильник')
     
-    def expire_product(self):
+    def get_expiring_products(self) -> tuple[list[any], list[any]]:
         with self.cursor() as cursor:
             today = datetime.now()
             cursor.execute("""
@@ -110,8 +110,10 @@ class Database:
                     expire_today.append((product[0], product[1], product[2]))
             return expired_products, expire_today
 
-    def clear_expired_product(self,id, quantity: int):
+    def clear_expired_product(self,id, name: str, quantity: int, reason: str | None):
         with self.cursor() as cursor:
+            if quantity <= 0:
+                yield ValueError
             cursor.execute("""
                 SELECT quantity FROM fridge WHERE id = ?
             """, (id,))
@@ -125,13 +127,19 @@ class Database:
                 cursor.execute("""
                     UPDATE fridge SET quantity = ? WHERE id = ?
                 """, (fridge_quantity - quantity, id))
+                return f"Списана партия {name} - {quantity} Шт. Осталось {fridge_quantity - quantity} Шт. Причина {reason}"
             else: 
                 cursor.execute("""
                     DELETE FROM fridge WHERE id = ?
                 """, (id,))
+                return f"Партия {name} - {quantity} Шт. списана полностью по причине {reason}"
+            
 
     def new_delivery(self, product_name: str, quantity: int):
         with self.cursor() as cursor:
+            if quantity < 0:
+                return ValueError
+
             cursor.execute("""
                 SELECT quantity FROM freezer WHERE product_name = ?
             """, (product_name,))
