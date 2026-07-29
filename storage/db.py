@@ -3,7 +3,8 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 
 class Database:
-    def _init_db(self, path_to_db="data/database.db"):
+    def __init__(self, path_to_db="data/database.db"):
+        self.path_to_db = path_to_db
         conn = self.get_conn()
         conn.execute("""
             CREATE TABLE IF NOT EXISTS products (
@@ -17,23 +18,49 @@ class Database:
             CREATE TABLE IF NOT EXISTS fridge (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 product_name TEXT,
-                quantity INTEGER,
+                quantity INTEGER NOT NULL CHECK (quantity > 0),
                 date_added TEXT NOT NULL,
                 expiration_date TEXT NOT NULL
             )
         """)
         conn.execute("""
-            CRATE TABLE IF NOT EXISTS freezer (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                product_name TEXT,
-                quantity INTEGER
+            CREATE TABLE IF NOT EXISTS freezer (
+                product_name TEXT PRIMARY KEY,
+                quantity INTEGER NOT NULL CHECK (quantity > 0),
             )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                telegram_id INTEGER PRIMARY KEY,
+                username TEXT NOT NULL,
+                full_name TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role IN ('admin', 'employee')),
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS operations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                operation_type TEXT NOT NULL CHECK (operation_type IN ('delivery', 'defrost', 'sale', 'write_off')),
+                product_name TEXT NOT NULL,
+                batch_id INTEGER,
+                quantity INTEGER NOT NULL CHECK (quantity > 0),
+                reason TEXT,
+                created_at TEXT NOT NULL,
+                created_by INTEGER NOT NULL,
+
+                FOREIGN KEY (batch_id) REFERENCES fridge(id),
+                FOREIGN KEY (created_by) REFERENCES users(telegram_id)
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_operations_created_at ON operations(created_at);
+            CREATE INDEX IF NOT EXISTS idx_operations_created_by ON operations(created_by);
         """)
         conn.commit()
         conn.close()
 
     def get_conn(self):
-        conn = sqlite3.connect("storage/users.db")
+        conn = sqlite3.connect(self.path_to_db)
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -159,15 +186,17 @@ class Database:
                 """, (quantity + row[0], product_name))
                 return (f'Успешно добавлено {quantity} {product_name} в морозильник')
 
-    def export_fridge(self):
+    def fridge_batches_list(self):
         with self.cursor() as cursor:
             cursor.execute("""
-                SELECT id, product_name, quantity, date_added, expiration_date FROM fridge
+                SELECT id, product_name, quantity, date_added, expiration_date
+                FROM fridge
+                ORDER BY expiration_date ASC
             """)
             products = cursor.fetchall()
             return products
 
-    def export_freezer(self):
+    def freezer_products_list(self):
         with self.cursor() as cursor:
             cursor.execute("""
                 SELECT product_name, quantity FROM freezer
@@ -176,7 +205,7 @@ class Database:
             return products
     
 
-            
+DB = Database(path_to_db="data/database.db")
 
 
     
