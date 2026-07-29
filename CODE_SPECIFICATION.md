@@ -29,8 +29,7 @@ Telegram-бот предназначен для учёта замороженн�
 6. оформлять полную продажу, частичную продажу и списание;
 7. хранить историю операций;
 8. отправлять ежедневные уведомления;
-9. разграничивать права администратора и сотрудника;
-10. строить статистику за день, неделю и месяц.
+9. разграничивать права администратора и сотрудника.
 
 ## 3. Текущая структура проекта
 
@@ -206,7 +205,9 @@ async def main() -> None:
 
 Возвращает все партии холодильника с идентификатором, названием, количеством, датой добавления и сроком годности.
 
-Требования: переименовать в `list_fridge_batches(...)`, добавить сортировку по `expiration_date` и опциональный фильтр активных/просроченных партий.
+Требования: переименовать в `list_fridge_batches(...)`, добавить сортировку по
+`expiration_date`. Просроченные партии определяются по сроку годности, отдельный
+статус партии не используется.
 
 #### `export_freezer(self) -> list[sqlite3.Row]` — реализовано частично
 
@@ -230,18 +231,19 @@ cursor() -> ContextManager[sqlite3.Cursor]
 #### Справочник товаров
 
 ```python
-create_product(name: str, fridge_storage_hours: int,
-               freezer_storage_hours: int | None,
+create_product(name: str, fridge_storage_days: int,
+               freezer_storage_days: int | None,
                category: str | None) -> Product
 get_product(name: str) -> Product | None
 list_products(category: str | None = None) -> list[Product]
-update_product(name: str, *, fridge_storage_hours: int | None = None,
-               freezer_storage_hours: int | None = None,
+update_product(name: str, *, fridge_storage_days: int | None = None,
+               freezer_storage_days: int | None = None,
                category: str | None = None) -> Product
 delete_product(name: str) -> bool
 ```
 
-Удаление товара запрещено, пока с ним связаны ненулевые остатки или активные партии.
+Удаление товара запрещено, пока с ним связаны остатки в морозильнике или партии
+в холодильнике.
 
 #### Морозильник и партии холодильника
 
@@ -252,11 +254,13 @@ list_freezer_stock() -> list[Stock]
 create_defrost_batch(product_name: str, quantity: int,
                      defrosted_at: datetime, actor_id: int) -> Batch
 get_batch(batch_id: int) -> Batch | None
-list_fridge_batches(status: str = "active") -> list[Batch]
+list_fridge_batches() -> list[Batch]
 get_expiring_batches(start: datetime, end: datetime) -> list[Batch]
 ```
 
 `create_defrost_batch` обязан атомарно уменьшить морозильный остаток и создать новую партию. Партии с разными датами окончания срока нельзя объединять.
+Если морозильный остаток стал равен нулю, соответствующая строка
+`freezer_stock` удаляется в той же транзакции.
 
 #### Продажи и списания
 
@@ -274,34 +278,28 @@ list_operations(operation_type: str | None = None,
 - «Продано всё» — `sell_batch` с текущим полным остатком;
 - «Продано частично» — `sell_batch` с указанным проданным количеством либо с количеством, рассчитанным по введённому остатку;
 - «Не продано» — `write_off_batch` с полным остатком и причиной `expired`;
-- после нулевого остатка партия получает статус `closed` либо удаляется из активной выборки, но история операции сохраняется.
+- после нулевого остатка строка партии удаляется из `fridge_batches`, но
+  операция продажи или списания сохраняется в `operations`.
 
 #### Пользователи и настройки
 
 ```python
-upsert_user(telegram_id: int, full_name: str) -> User
+create_user(telegram_id: int, full_name: str,
+            role: str, actor_id: int) -> User
 get_user(telegram_id: int) -> User | None
 list_users() -> list[User]
 set_user_role(telegram_id: int, role: str, actor_id: int) -> User
+set_user_active(telegram_id: int, is_active: bool,
+                actor_id: int) -> User
 get_notification_settings() -> NotificationSettings
 set_notification_time(notification_time: time, actor_id: int) -> None
 ```
 
-Допустимые роли: `admin` и `employee`. Изменять справочник, роли, настройки и просматривать статистику может только администратор.
-
-#### Статистика
-
-```python
-get_statistics(date_from: datetime, date_to: datetime) -> Statistics
-```
-
-Результат должен содержать:
-
-- количество размороженной продукции;
-- количество проданной продукции;
-- количество списанной продукции;
-- процент списания: `written_off / defrosted * 100`, при нулевой разморозке — `0`;
-- границы периода.
+Допустимые роли: `admin` и `employee`. Пользователей вручную создаёт
+администратор, указывая Telegram ID, отображаемое имя и роль. Команда `/start`
+не создаёт пользователя автоматически: доступ разрешается только активным
+пользователям, уже добавленным администратором. Изменять справочник, роли,
+пользователей и настройки может только администратор.
 
 ## 7. Сервисный слой — `storage/storage_service.py`
 
@@ -339,8 +337,6 @@ class StorageService:
 
     def get_write_off_history(self, date_from: datetime | None = None,
                               date_to: datetime | None = None) -> list[Operation]: ...
-    def get_statistics(self, period: str,
-                       now: datetime | None = None) -> Statistics: ...
 ```
 
 ### Прикладные ошибки
@@ -398,8 +394,9 @@ add_product(message_or_callback, state)         # только admin
 edit_product(message_or_callback, state)        # только admin
 delete_product(callback)                       # только admin
 show_user_management(callback)                 # только admin
+add_user(message_or_callback, state)             # только admin
 set_user_role(callback)                        # только admin
-show_statistics(callback)                      # только admin
+set_user_active(callback)                      # только admin
 set_notification_time(message, state)          # только admin
 
 cancel_action(message_or_callback, state)       # отмена любого FSM-сценария
@@ -420,7 +417,6 @@ handle_storage_error(event, exception)          # понятная прикла�
 
 - «⚙ Управление товарами»;
 - «👥 Управление сотрудниками»;
-- «📈 Статистика»;
 - «🕘 Время уведомлений».
 
 Callback-данные должны содержать действие и устойчивый идентификатор записи, например `batch:sell_all:42`, а не название товара.
@@ -467,8 +463,8 @@ def upload_database(db_path: str, credentials_path: str,
 |---|---|---|---|
 | `id` | INTEGER | PK | Идентификатор товара |
 | `name` | TEXT | UNIQUE, NOT NULL | Название |
-| `fridge_storage_hours` | INTEGER | NOT NULL, CHECK > 0 | Срок после разморозки |
-| `freezer_storage_hours` | INTEGER | NULL или CHECK > 0 | Допустимый срок в морозильнике |
+| `fridge_storage_days` | INTEGER | NOT NULL, CHECK > 0 | Срок после разморозки в днях |
+| `freezer_storage_days` | INTEGER | NULL или CHECK > 0 | Допустимый срок в морозильнике в днях |
 | `category` | TEXT | NULL | Категория |
 | `is_active` | INTEGER | NOT NULL, default 1 | Архивирование без потери истории |
 
@@ -477,7 +473,7 @@ def upload_database(db_path: str, credentials_path: str,
 | Поле | Тип | Ограничения | Назначение |
 |---|---|---|---|
 | `product_id` | INTEGER | PK, FK → products | Один агрегированный остаток товара |
-| `quantity` | INTEGER | NOT NULL, CHECK >= 0 | Остаток в морозильнике |
+| `quantity` | INTEGER | NOT NULL, CHECK > 0 | Остаток в морозильнике; при нуле строка удаляется |
 | `updated_at` | TEXT | NOT NULL | Последнее изменение |
 
 ### `fridge_batches`
@@ -487,10 +483,9 @@ def upload_database(db_path: str, credentials_path: str,
 | `id` | INTEGER | PK AUTOINCREMENT | Идентификатор партии |
 | `product_id` | INTEGER | NOT NULL, FK → products | Товар |
 | `initial_quantity` | INTEGER | NOT NULL, CHECK > 0 | Количество при разморозке |
-| `quantity` | INTEGER | NOT NULL, CHECK >= 0 | Текущий остаток |
+| `quantity` | INTEGER | NOT NULL, CHECK > 0 | Текущий остаток; при нуле строка удаляется |
 | `defrosted_at` | TEXT | NOT NULL | Дата и время разморозки ISO 8601 |
 | `expires_at` | TEXT | NOT NULL | Дата и время окончания срока ISO 8601 |
-| `status` | TEXT | NOT NULL | `active` или `closed` |
 | `created_by` | INTEGER | NOT NULL, FK → users | Кто создал партию |
 
 ### `operations`
@@ -500,7 +495,7 @@ def upload_database(db_path: str, credentials_path: str,
 | `id` | INTEGER | PK AUTOINCREMENT | Идентификатор операции |
 | `operation_type` | TEXT | NOT NULL | `delivery`, `defrost`, `sale`, `write_off` |
 | `product_id` | INTEGER | NOT NULL, FK → products | Товар |
-| `batch_id` | INTEGER | NULL, FK → fridge_batches | Связанная партия |
+| `batch_id` | INTEGER | NULL, FK → fridge_batches, ON DELETE SET NULL | Связанная существующая партия |
 | `quantity` | INTEGER | NOT NULL, CHECK > 0 | Количество |
 | `reason` | TEXT | NULL | Причина списания |
 | `created_at` | TEXT | NOT NULL | Дата и время операции |
@@ -534,8 +529,8 @@ def upload_database(db_path: str, credentials_path: str,
 class Product:
     id: int
     name: str
-    fridge_storage_hours: int
-    freezer_storage_hours: int | None
+    fridge_storage_days: int
+    freezer_storage_days: int | None
     category: str | None
 
 @dataclass(frozen=True)
@@ -547,7 +542,6 @@ class Batch:
     quantity: int
     defrosted_at: datetime
     expires_at: datetime
-    status: str
 
 @dataclass(frozen=True)
 class Operation:
@@ -570,8 +564,10 @@ class Operation:
 3. Имена товаров уникальны без учёта регистра.
 4. Разморозить можно не больше текущего остатка морозильника.
 5. Продать или списать можно не больше текущего остатка партии.
-6. Закрытая партия больше не изменяется и не показывается в активных остатках.
-7. Срок годности считается как `defrosted_at + fridge_storage_hours`.
+6. При нулевом остатке строка товара в морозильнике или партия в холодильнике
+   физически удаляется. Соответствующая операция сохраняется в журнале.
+7. Срок хранения задаётся целым количеством дней; срок годности считается как
+   `defrosted_at + timedelta(days=fridge_storage_days)`.
 8. Все даты хранятся в ISO 8601; преобразование в локальное отображение выполняется в Telegram-слое.
 9. Денежные и количественные операции не используют `float`.
 10. Проверка роли выполняется и в интерфейсе, и в сервисном слое.
@@ -595,14 +591,15 @@ class Operation:
 2. Бот запрашивает проданное количество или оставшийся остаток; интерфейс должен явно указывать, какое значение ожидается.
 3. Сервис проверяет значение.
 4. База уменьшает остаток партии и добавляет операцию `sale`.
-5. При нулевом остатке партия закрывается.
+5. При нулевом остатке партия удаляется из `fridge_batches`.
 
 ### Не продано
 
 1. Пользователь выбирает истёкшую или истекающую партию.
 2. Сервис получает полный остаток партии.
-3. База создаёт операцию `write_off` с причиной и закрывает партию в одной транзакции.
-4. Запись появляется в истории списаний и статистике.
+3. База создаёт операцию `write_off` с причиной и удаляет партию в одной
+   транзакции.
+4. Запись появляется в истории списаний.
 
 ## 15. Логирование и обработка ошибок
 
@@ -623,13 +620,12 @@ class Operation:
 - новое поступление и суммирование морозильного остатка;
 - успешная разморозка;
 - отказ при недостаточном остатке без частичных изменений;
-- расчёт срока годности в часах;
+- расчёт срока годности в днях;
 - сохранение двух отдельных партий одного товара;
 - выборка просроченных и истекающих сегодня партий;
 - полная и частичная продажа;
 - полное списание с сохранением причины;
 - запрет отрицательного и нулевого количества;
-- расчёт статистики, включая период без разморозок;
 - проверка прав сотрудника и администратора;
 - rollback при ошибке внутри составной операции.
 
@@ -653,11 +649,10 @@ class Operation:
 5. продажи и списания меняют остаток и сохраняют историю;
 6. уведомление приходит один раз в день в настроенное время;
 7. права ролей проверяются на уровне бизнес-логики;
-8. статистика совпадает с журналом операций;
-9. ошибки ввода не приводят к падению polling;
-10. автоматические тесты покрывают критические операции и проходят без ошибок;
-11. секреты отсутствуют в исходном коде и истории новых коммитов;
-12. README содержит команды установки зависимостей, настройки окружения и запуска.
+8. ошибки ввода не приводят к падению polling;
+9. автоматические тесты покрывают критические операции и проходят без ошибок;
+10. секреты отсутствуют в исходном коде и истории новых коммитов;
+11. README содержит команды установки зависимостей, настройки окружения и запуска.
 
 ## 18. Рекомендуемый порядок реализации
 
@@ -668,6 +663,19 @@ class Operation:
 5. Завершить `/start`, клавиатуры и FSM-сценарий разморозки.
 6. Добавить остатки, истекающие партии, продажи и списания.
 7. Добавить пользователей, роли и административные операции.
-8. Добавить историю, статистику и ежедневные уведомления.
+8. Добавить историю и ежедневные уведомления.
 9. Покрыть критические сценарии тестами.
 10. При необходимости реализовать резервное копирование в Google.
+
+## 19. Отложенная функциональность
+
+На текущем этапе не входят в объём реализации:
+
+- самостоятельная или автоматическая регистрация пользователей; сотрудников
+  вручную добавляет администратор, а `/start` только проверяет наличие активной
+  учётной записи;
+- статистика за день, неделю и месяц, включая метод `get_statistics`, сервисный
+  сценарий, Telegram-обработчик, пункт меню и отдельные тесты статистики.
+
+Журнал `operations` и история списаний сохраняются в текущем объёме работ, чтобы
+статистику можно было добавить позже без потери исходных данных.
