@@ -65,31 +65,16 @@ class Database:
 
     def _create_database_directory(self) -> None:
         if self.path_to_db == ":memory:":
-            return
-
+            raise ValueError("Database поддерживает только файловые базы данных")
         Path(self.path_to_db).parent.mkdir(parents=True, exist_ok=True)
 
     def _initialize_database(self) -> None:
         connection = self.get_conn()
         try:
             connection.executescript(DATABASE_SCHEMA)
-            self._add_missing_operation_columns(connection)
             connection.commit()
         finally:
             connection.close()
-
-    @staticmethod
-    def _add_missing_operation_columns(
-        connection: sqlite3.Connection,
-    ) -> None:
-        operation_columns = {
-            row["name"]
-            for row in connection.execute("PRAGMA table_info(operations)")
-        }
-        if "reason" not in operation_columns:
-            connection.execute(
-                "ALTER TABLE operations ADD COLUMN reason TEXT"
-            )
 
     def get_conn(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path_to_db)
@@ -115,7 +100,7 @@ class Database:
             quantity, bool
         )
         if not is_integer or quantity <= 0:
-            raise ValueError("quantity must be a positive integer")
+            raise ValueError("Количество должно быть положительным целым числом")
 
     @staticmethod
     def _operation_user_id(user_id: int | None) -> int:
@@ -150,7 +135,7 @@ class Database:
                 batch_id,
                 quantity,
                 reason,
-                datetime.now().isoformat(timespec="seconds"),
+                datetime.now().strftime("%Y-%m-%d %H:%M"),
                 self._operation_user_id(user_id),
             ),
         )
@@ -171,11 +156,11 @@ class Database:
 
             freezer_row = cursor.fetchone()
             if freezer_row is None:
-                return f"Нет {product_name} в морозильнике"
+                raise ValueError(f"Нет {product_name} в морозильнике")
 
             freezer_quantity = freezer_row["quantity"]
             if freezer_quantity < quantity:
-                return f"Недостаточно {product_name} в морозильнике"
+                raise ValueError(f"Недостаточно {product_name} в морозильнике")
 
             cursor.execute(
                 """
@@ -186,9 +171,7 @@ class Database:
             product = cursor.fetchone()
 
             if product is None:
-                raise ValueError(
-                    f"Продукт {product_name} не найден в базе данных"
-                )
+                raise ValueError(f"Продукт {product_name} не найден в базе данных")
 
             fridge_storage_time = product["fridge_storage_time"]
             added_at = datetime.now()
@@ -233,13 +216,12 @@ class Database:
             )
 
             return (
-                f"Успешно добавлено {quantity} "
-                f"{product_name} в холодильник"
+                f"Успешно добавлено {quantity} {product_name} в холодильник"
             )
 
     def get_expiring_products(
         self,
-    ) -> tuple[list[tuple[int, str, int]], list[tuple[int, str, int]]] | bool:
+    ) -> tuple[list[dict[int, str, int]], list[dict[int, str, int]]]:
         """Возвращает просроченные и истекающие сегодня партии."""
         with self.cursor() as cursor:
             today = datetime.now().strftime("%Y-%m-%d")
@@ -254,17 +236,17 @@ class Database:
             batches = cursor.fetchall()
 
             if not batches:
-                return False
+                return None
 
-            expired_products: list[tuple[int, str, int]] = []
-            expiring_today: list[tuple[int, str, int]] = []
+            expired_products: list[dict[int, str, int]] = []
+            expiring_today: list[dict[str, int]] = []
 
             for batch in batches:
-                batch_summary = (
-                    batch["id"],
-                    batch["product_name"],
-                    batch["quantity"],
-                )
+                batch_summary = {
+                    "id": batch["id"],
+                    "product_name": batch["product_name"],
+                    "quantity": batch["quantity"],
+                }
                 if batch["expiration_date"] < today:
                     expired_products.append(batch_summary)
                 else:
@@ -277,8 +259,9 @@ class Database:
         id: int | None = None,
         name: str | None = None,
         quantity: int | None = None,
-        operation_type: str | None = None,
+        operation_type: str = "write_off",
         user_id: int | None = None,
+        reason: str | None = None
     ) -> str | bool:
         """Списывает одну партию или всю просрочку при вызове без партии."""
         no_batch_arguments = id is None and name is None and quantity is None
@@ -286,9 +269,7 @@ class Database:
             return self._clear_all_expired_products(user_id)
 
         if id is None or quantity is None:
-            raise ValueError(
-                "Для списания одной партии нужны id и quantity"
-            )
+            raise ValueError("Для списания одной партии нужны id и quantity")
 
         self._validate_quantity(quantity)
         return self._clear_fridge_batch(
@@ -296,6 +277,7 @@ class Database:
             quantity=quantity,
             operation_type=operation_type,
             user_id=user_id,
+            reason=reason
         )
 
     def _clear_all_expired_products(
@@ -308,11 +290,11 @@ class Database:
                 """
                 SELECT id, product_name, quantity
                 FROM fridge
-                WHERE expiration_date < ?
+                WHERE expiration_date <= ?
                 ORDER BY id
                 """,
                 (today,),
-            )
+            ) #Продукты всегда списываются в конце смены, метод списывает и сегодняшние продукты
             expired_batches = cursor.fetchall()
 
             if not expired_batches:
@@ -326,7 +308,7 @@ class Database:
                     quantity=batch["quantity"],
                     user_id=user_id,
                     batch_id=batch["id"],
-                    reason="expired",
+                    reason="Просрочено",
                 )
 
             batch_ids = [(batch["id"],) for batch in expired_batches]
@@ -340,7 +322,7 @@ class Database:
             )
             return (
                 f"Списано просроченных партий: {len(expired_batches)}. "
-                f"Общее количество: {total_quantity} Шт."
+                f"Общее количество продуктов: {total_quantity} Шт."
             )
 
     def _clear_fridge_batch(
@@ -349,6 +331,7 @@ class Database:
         quantity: int,
         operation_type: str | None,
         user_id: int | None,
+        reason: str | None
     ) -> str | bool:
         with self.cursor() as cursor:
             cursor.execute(
@@ -370,7 +353,7 @@ class Database:
                 return False
 
             logged_operation_type, reason = self._operation_details(
-                operation_type
+                operation_type, reason=reason
             )
             self._log_operation(
                 cursor=cursor,
@@ -410,9 +393,10 @@ class Database:
     @staticmethod
     def _operation_details(
         operation_type: str | None,
+        reason: str | None
     ) -> tuple[str, str | None]:
-        if operation_type in (None, "write_off"):
-            return "write_off", None
+        if operation_type in (None, "write_off") and reason is not None:
+            return "write_off", reason
 
         if operation_type == "sale":
             return "sale", None
