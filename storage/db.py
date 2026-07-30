@@ -8,7 +8,7 @@ from typing import Iterator
 DATABASE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS products (
     name TEXT PRIMARY KEY,
-    fridge_storage_time INTEGER,
+    fridge_storage_days INTEGER,
     freezer_storage_time INTEGER,
     category TEXT
 );
@@ -164,7 +164,7 @@ class Database:
 
             cursor.execute(
                 """
-                SELECT fridge_storage_time FROM products WHERE name = ?
+                SELECT fridge_storage_days FROM products WHERE name = ?
                 """,
                 (product_name,),
             )
@@ -173,11 +173,11 @@ class Database:
             if product is None:
                 raise ValueError(f"Продукт {product_name} не найден в базе данных")
 
-            fridge_storage_time = product["fridge_storage_time"]
+            fridge_storage_days = product["fridge_storage_days"]
             added_at = datetime.now()
             date_added = added_at.strftime("%Y-%m-%d")
             expiration_date = (
-                added_at + timedelta(days=fridge_storage_time)
+                added_at + timedelta(days=fridge_storage_days)
             ).strftime("%Y-%m-%d")
 
             cursor.execute(
@@ -430,13 +430,26 @@ class Database:
             )
 
             return (
-                f"Успешно добавлено {quantity} "
-                f"{product_name} в морозильник"
+                f"Успешно добавлено {quantity} {product_name} в морозильник"
             )
 
-    def fridge_batches_list(self) -> list[sqlite3.Row]:
+    def fridge_batches_list(self, isfresh: bool = False) -> list[sqlite3.Row]:
         """Возвращает партии холодильника по сроку годности."""
         with self.cursor() as cursor:
+            if isfresh: 
+                today = datetime.now().strftime("%Y-%m-%d")
+                cursor.execute(
+                    """
+                    SELECT id, product_name, quantity, date_added, expiration_date
+                    FROM fridge
+                    WHERE expiration_date > ?
+                    ORDER BY expiration_date ASC
+                    """,
+                    (today,)
+                )
+                
+                return [dict(row) for row in cursor.fetchall()]
+
             cursor.execute(
                 """
                 SELECT id, product_name, quantity, date_added, expiration_date
@@ -444,7 +457,7 @@ class Database:
                 ORDER BY expiration_date ASC
                 """
             )
-            return cursor.fetchall()
+            return [dict(row) for row in cursor.fetchall()]
 
     def freezer_products_list(self) -> list[sqlite3.Row]:
         """Возвращает текущие остатки продуктов в морозильнике."""
