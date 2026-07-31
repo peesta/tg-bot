@@ -8,7 +8,7 @@ from typing import Iterator
 DATABASE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS products (
     name TEXT PRIMARY KEY,
-    fridge_storage_days INTEGER,
+    fridge_storage_time INTEGER,
     freezer_storage_time INTEGER,
     category TEXT
 );
@@ -164,7 +164,7 @@ class Database:
 
             cursor.execute(
                 """
-                SELECT fridge_storage_days FROM products WHERE name = ?
+                SELECT fridge_storage_time FROM products WHERE name = ?
                 """,
                 (product_name,),
             )
@@ -173,11 +173,11 @@ class Database:
             if product is None:
                 raise ValueError(f"Продукт {product_name} не найден в базе данных")
 
-            fridge_storage_days = product["fridge_storage_days"]
+            fridge_storage_time = product["fridge_storage_time"]
             added_at = datetime.now()
             date_added = added_at.strftime("%Y-%m-%d")
             expiration_date = (
-                added_at + timedelta(days=fridge_storage_days)
+                added_at + timedelta(days=fridge_storage_time)
             ).strftime("%Y-%m-%d")
 
             cursor.execute(
@@ -446,9 +446,9 @@ class Database:
                 today = datetime.now().strftime("%Y-%m-%d")
                 cursor.execute(
                     """
-                    SELECT id, product_name, quantity, date_added, expiration_date
-                    FROM fridge
-                    WHERE expiration_date > ?
+                    SELECT id, product_name, quantity, date_added, expiration_date 
+                    FROM fridge 
+                    WHERE expiration_date > ? 
                     ORDER BY expiration_date ASC
                     """,
                     (today,)
@@ -458,8 +458,8 @@ class Database:
 
             cursor.execute(
                 """
-                SELECT id, product_name, quantity, date_added, expiration_date
-                FROM fridge
+                SELECT id, product_name, quantity, date_added, expiration_date 
+                FROM fridge 
                 ORDER BY expiration_date ASC
                 """
             )
@@ -470,11 +470,71 @@ class Database:
         with self.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT product_name, quantity
+                SELECT product_name, quantity 
                 FROM freezer
                 """
             )
             return cursor.fetchall()
+
+    def new_product(
+        self, 
+        name: str, 
+        fridge_storage_time: int
+        ) -> None:
+        """Добавляет в таблицу продуктов новые продукты"""
+        self._validate_quantity(fridge_storage_time)
+
+        with self.cursor() as cursor:
+            try:
+                cursor.execute(
+                    """
+                    INSERT INTO products (name, fridge_storage_time)
+                    VALUES (?,?)
+                    """, (name, fridge_storage_time),
+                )
+            except sqlite3.IntegrityError:
+                raise ValueError(f"{name} уже есть в базе данных")
+            
+            return
+
+    def edit_product(
+        self,
+        name: str,
+        fridge_storage_time: int,
+        freezer_storage_time: int,
+        new_name: str | None = None
+    ) -> None:
+        self._validate_quantity(fridge_storage_time)
+        self._validate_quantity(freezer_storage_time)
+
+        with self.cursor() as cursor:
+
+            request = """
+                UPDATE products 
+                SET fridge_storage_time = ?
+                SET freezer_storage_time = ?
+                """
+            params = (fridge_storage_time, freezer_storage_time)
+
+            if new_name is not None:
+                request += " SET name = ?"
+                params.append(new_name)
+
+            request += " WHERE name = ?"
+            params.append(name)
+
+            try:
+                cursor.execute(request, params)
+            except sqlite3.IntegrityError:
+                raise ValueError()
+            if cursor.fetchone is None:
+                raise ValueError(f"Нет продукта с именем {name}")
+
+            return
+
+            
+                
+
 
 
 DB = Database()
