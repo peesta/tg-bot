@@ -405,7 +405,10 @@ class Database:
         return "write_off", operation_type
 
     def new_delivery(
-        self, product_name: str, quantity: int, user_id: int | None = None
+        self, 
+        product_name: str, 
+        quantity: int, 
+        user_id: int | None = None
     ) -> str:
         """Добавляет поставку продукта в морозильник."""
         self._validate_quantity(quantity)
@@ -433,8 +436,11 @@ class Database:
                 f"Успешно добавлено {quantity} {product_name} в морозильник"
             )
 
-    def fridge_batches_list(self, isfresh: bool = False) -> list[sqlite3.Row]:
-        """Возвращает партии холодильника по сроку годности."""
+    def fridge_batches_list(
+        self, 
+        isfresh: bool = False
+        ) -> list[sqlite3.Row]:
+        """Возвращает партии холодильника по сроку годности. Можно выбрать отдельно только свежие партии"""
         with self.cursor() as cursor:
             if isfresh: 
                 today = datetime.now().strftime("%Y-%m-%d")
