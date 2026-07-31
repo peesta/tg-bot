@@ -47,6 +47,12 @@ CREATE TABLE IF NOT EXISTS operations (
     FOREIGN KEY (created_by) REFERENCES users(telegram_id)
 );
 
+CREATE TABLE IF NOT EXISTS errors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    error_type TEXT NOT NULL,
+    error_message TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_operations_created_at
     ON operations(created_at);
 
@@ -480,7 +486,7 @@ class Database:
         self, 
         name: str, 
         fridge_storage_time: int
-        ) -> None:
+    ) -> None:
         """Добавляет в таблицу продуктов новые продукты"""
         self._validate_quantity(fridge_storage_time)
 
@@ -531,10 +537,6 @@ class Database:
                 raise ValueError(f"Нет продукта с именем {name}")
 
             return
-
-            
-                
-
 
 
 DB = Database()
