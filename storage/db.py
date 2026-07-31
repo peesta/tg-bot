@@ -445,7 +445,7 @@ class Database:
     def fridge_batches_list(
         self, 
         isfresh: bool = False
-        ) -> list[sqlite3.Row]:
+        ) -> list[dict]:
         """Возвращает партии холодильника по сроку годности. Можно выбрать отдельно только свежие партии"""
         with self.cursor() as cursor:
             if isfresh: 
@@ -471,7 +471,7 @@ class Database:
             )
             return [dict(row) for row in cursor.fetchall()]
 
-    def freezer_products_list(self) -> list[sqlite3.Row]:
+    def freezer_products_list(self) -> list[dict]:
         """Возвращает текущие остатки продуктов в морозильнике."""
         with self.cursor() as cursor:
             cursor.execute(
@@ -480,7 +480,7 @@ class Database:
                 FROM freezer
                 """
             )
-            return cursor.fetchall()
+            return [dict(row) for row in cursor.fetchall()]
 
     def new_product(
         self, 
@@ -537,6 +537,3 @@ class Database:
                 raise ValueError(f"Нет продукта с именем {name}")
 
             return
-
-
-DB = Database()

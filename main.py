@@ -5,6 +5,7 @@ from aiogram import Bot, Dispatcher
 from dotenv import load_dotenv
 
 from telegram.handler import router
+from storage.db import Database
 
 
 def get_bot_token() -> str:
@@ -23,7 +24,8 @@ def get_bot_token() -> str:
 async def main() -> None:
     """Создаёт бота и запускает обработку входящих сообщений."""
     bot = Bot(token=get_bot_token())
-    dispatcher = Dispatcher()
+    db = Database("data/database.db")
+    dispatcher = Dispatcher(db=db)
     dispatcher.include_router(router)
 
     await dispatcher.start_polling(bot)
