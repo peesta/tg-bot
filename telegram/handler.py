@@ -8,7 +8,7 @@ from storage.db import Database
 
 router = Router()
 
-class Maket:
+class ButtonBuilder:
     main_menu_buttons = InlineKeyboardMarkup(
         [
             [
@@ -49,8 +49,46 @@ class Maket:
             ],
         ])
 
+    _page_idx = 0
+    _page_count = 0
 
-btns = Maket
+    async def increase_page_idx(self) -> None:
+        self._page_idx += 1
+        if self._page_idx > self._page_count:
+            self._page_idx = 1
+
+    async def decrease_page_idx(self) -> None:
+        self._page_idx -= 1
+        if self._page_idx < 1:
+            self._page_idx = self._page_count
+
+    async def defrost_buttons(self, page: int) -> InlineKeyboardMarkup:
+        self._page_idx = page
+        if page == 1:
+            self._page_count, products = db.freezer_products_list()
+        btns = [
+                [
+                    InlineKeyboardButton(
+                        text=" Поиск",
+                        callback_data="back"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="Далее ",
+                        callback_data="back"
+                    )
+                ],
+            ]
+        if page > 1:
+            btns.insert(0, [
+                InlineKeyboardButton(
+                    text=" Назад",
+                    callback_data="back"
+                )
+            ])
+
+btns = ButtonBuilder()
 
 @router.message(CommandStart())
 async def start_command(message: Message) -> None:

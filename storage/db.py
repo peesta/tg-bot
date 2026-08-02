@@ -471,15 +471,30 @@ class Database:
             )
             return [dict(row) for row in cursor.fetchall()]
 
-    def freezer_products_list(self) -> list[dict]:
+    def _get_page_count(self) -> int:
+        with self.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT COUNT(*) FROM freezer
+                """
+            )
+            return int(cursor.fetchone()[0])
+
+    def freezer_products_list(self, page: int = 1, limit: int = 3) -> list[dict]:
         """Возвращает текущие остатки продуктов в морозильнике."""
+        offset = (page - 1) * limit
         with self.cursor() as cursor:
             cursor.execute(
                 """
                 SELECT product_name, quantity 
                 FROM freezer
-                """
+                LIMIT ? OFFSET ?
+                """,
+                (limit, offset)
             )
+            if page = 1:
+                page_count = self._get_page_count()
+                return page_count, [dict(row) for row in cursor.fetchall()]
             return [dict(row) for row in cursor.fetchall()]
 
     def new_product(
