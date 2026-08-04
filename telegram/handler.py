@@ -62,7 +62,17 @@ class ButtonBuilder:
         if self._page_idx < 1:
             self._page_idx = self._page_count
 
-    async def defrost_buttons(self, page: int) -> InlineKeyboardMarkup:
+    async def reset_page -> None:
+        self._page_idx = 0
+        self._page_count = 0
+
+    async def get_page_count(self) -> int:
+        return self._page_count
+
+    async def get_page_idx(self) -> int:
+        return self._page_idx
+
+    async def defrost_buttons(self, page: int = self._page_idx) -> InlineKeyboardMarkup:
         self._page_idx = page
         if page == 1:
             self._page_count, products = db.freezer_products_list()
@@ -70,13 +80,7 @@ class ButtonBuilder:
                 [
                     InlineKeyboardButton(
                         text=" Поиск",
-                        callback_data="back"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="Далее ",
-                        callback_data="back"
+                        callback_data="search"
                     )
                 ],
             ]
@@ -87,6 +91,18 @@ class ButtonBuilder:
                     callback_data="back"
                 )
             ])
+        elif page < self._page_count:
+            btns.append([
+                InlineKeyboardButton(
+                    text="Далее ",
+                    callback_data="next"
+                )
+            ])
+        for i, product in enumerate(products):
+            InlineKeyboardButton(
+                text = f"{product['product_name']} - {product['quantity']} шт.",
+                callback_data = f"defrost_{product['product_name']}"
+            )
 
 btns = ButtonBuilder()
 
@@ -99,15 +115,10 @@ async def start_command(message: Message) -> None:
         "*Выберите действие:*", reply_markup=keyboard
     )
 
-@router.callback_query(F.data.startswith == "defrost")
+@router.callback_query(F.data.startswith == "defrost_page_")
 async def defrost_callback(
         callback: CallbackQuery,
         db: Database,
     ) -> None:
-    keyboard = []
-
-    page = int(callback.data.removeprefix("defrost_"))
-
-    products = db.fridge_batches_list()
-
-    await callback.message.edit_text()
+    page = int(callback.data.removeprefix("defrost_page_"))
+    keyboard = await btns.defrost_buttons(page = page)
