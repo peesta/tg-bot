@@ -14,7 +14,7 @@ class ButtonBuilder:
             [
                 InlineKeyboardButton(
                     text="📦 Достать из заморозки 📦",
-                    callback_data="defrost_1"
+                    callback_data="defrost_page_1"
                 )
             ],
             [
@@ -72,15 +72,30 @@ class ButtonBuilder:
     async def get_page_idx(self) -> int:
         return self._page_idx
 
-    async def defrost_buttons(self, page: int = 1, db: Database | None = None) -> InlineKeyboardMarkup:
-        self._page_idx = page
+    async def defrost_buttons(self, page: int | None = None, db: Database | None = None) -> tuple[int, int, InlineKeyboardMarkup]:
+
+        if page is not None:
+            self._page_idx = page
+        else: 
+            page = self._page_idx
+
         if page == 1:
-            self._page_count, products = db.freezer_products_list()
+            page_count, products = db.freezer_products_list(page=page, limit = 3)
+            if page_count is not None:
+                self._page_count = page_count
+        else:
+            page_count, products = db.freezer_products_list(page=page, limit = 3)
+            if page_count is not None:
+                self._page_count = page_count
+
+        if not products:
+            return None
+
         btns = [
                 [
                     InlineKeyboardButton(
                         text="🔍 Поиск 🔎",
-                        callback_data="search"
+                        callback_data="defrost_search"
                     )
                 ],
             ]
@@ -88,21 +103,24 @@ class ButtonBuilder:
             btns.insert(0, [
                 InlineKeyboardButton(
                     text="⬅️ Назад",
-                    callback_data="back"
+                    callback_data=f"defrost_page_{page-1}"
                 )
             ])
         elif page < self._page_count:
             btns.append([
                 InlineKeyboardButton(
                     text="Далее ➡️",
-                    callback_data="next"
+                    callback_data=f"defrost_page_{page+1}"
                 )
             ])
         for i, product in enumerate(products):
-            InlineKeyboardButton(
+            prod_btn = InlineKeyboardButton(
                 text = f"{product['product_name']} - {product['quantity']} шт.",
-                callback_data = f"defrost_{product['product_name']}"
+                callback_data = f"defrost_product_{product['product_name']}"
             )
+            btns.insert(i, [prod_btn])
+        return self._page_idx, self._page_count, InlineKeyboardMarkup(btns=btns)
+
 
 btns = ButtonBuilder()
 
@@ -121,4 +139,7 @@ async def defrost_callback(
         db: Database,
     ) -> None:
     page = int(callback.data.removeprefix("defrost_page_"))
-    keyboard = await btns.defrost_buttons(page = page, db=db)
+    page_count, keyboard = await btns.defrost_buttons(page = page, db=db)
+    await message.answer(
+            f"*Выберите продукт:    стр. {page}\{page_count}*", reply_markup=keyboard
+        )

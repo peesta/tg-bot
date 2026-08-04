@@ -480,7 +480,7 @@ class Database:
         )
         return int(cursor.fetchone()[0])
 
-    def freezer_products_list(self, page: int = 1, limit: int = 3) -> list[dict]:
+    def freezer_products_list(self, page: int = 1, limit: int = 3) -> tuple[int, list[dict]]:
         """Возвращает текущие остатки продуктов в морозильнике."""
         offset = (page - 1) * limit
         with self.cursor() as cursor:
@@ -492,10 +492,15 @@ class Database:
                 """,
                 (limit, offset)
             )
+
+            rows = cursor.fetchall()
+            if not rows:
+                return None, None
+
             if page == 1:
                 page_count = self._get_page_count(cursor=cursor)
-                return page_count, [dict(row) for row in cursor.fetchall()]
-            return [dict(row) for row in cursor.fetchall()]
+                return page_count, [dict(row) for row in rows]
+            return None, [dict(row) for row in rows]
 
     def get_freezer_product(self, product_name: str) -> dict | None:
         """Возвращает информацию о конкретном продукте в морозильнике."""
