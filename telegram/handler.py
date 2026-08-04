@@ -62,7 +62,7 @@ class ButtonBuilder:
         if self._page_idx < 1:
             self._page_idx = self._page_count
 
-    async def reset_page -> None:
+    async def reset_page(self) -> None:
         self._page_idx = 0
         self._page_count = 0
 
@@ -72,14 +72,14 @@ class ButtonBuilder:
     async def get_page_idx(self) -> int:
         return self._page_idx
 
-    async def defrost_buttons(self, page: int = self._page_idx) -> InlineKeyboardMarkup:
+    async def defrost_buttons(self, page: int = 1, db: Database | None = None) -> InlineKeyboardMarkup:
         self._page_idx = page
         if page == 1:
             self._page_count, products = db.freezer_products_list()
         btns = [
                 [
                     InlineKeyboardButton(
-                        text=" Поиск",
+                        text="🔍 Поиск 🔎",
                         callback_data="search"
                     )
                 ],
@@ -87,14 +87,14 @@ class ButtonBuilder:
         if page > 1:
             btns.insert(0, [
                 InlineKeyboardButton(
-                    text=" Назад",
+                    text="⬅️ Назад",
                     callback_data="back"
                 )
             ])
         elif page < self._page_count:
             btns.append([
                 InlineKeyboardButton(
-                    text="Далее ",
+                    text="Далее ➡️",
                     callback_data="next"
                 )
             ])
@@ -115,10 +115,10 @@ async def start_command(message: Message) -> None:
         "*Выберите действие:*", reply_markup=keyboard
     )
 
-@router.callback_query(F.data.startswith == "defrost_page_")
+@router.callback_query(F.data.startswith("defrost_page_"))
 async def defrost_callback(
         callback: CallbackQuery,
         db: Database,
     ) -> None:
     page = int(callback.data.removeprefix("defrost_page_"))
-    keyboard = await btns.defrost_buttons(page = page)
+    keyboard = await btns.defrost_buttons(page = page, db=db)

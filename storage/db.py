@@ -471,14 +471,14 @@ class Database:
             )
             return [dict(row) for row in cursor.fetchall()]
 
-    def _get_page_count(self) -> int:
-        with self.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT COUNT(*) FROM freezer
-                """
-            )
-            return int(cursor.fetchone()[0])
+    def _get_page_count(self, cursor: sqlite3.Cursor) -> int:
+        """Возвращает количество страниц для холодильника."""
+        cursor.execute(
+            """
+            SELECT COUNT(*) FROM freezer
+            """
+        )
+        return int(cursor.fetchone()[0])
 
     def freezer_products_list(self, page: int = 1, limit: int = 3) -> list[dict]:
         """Возвращает текущие остатки продуктов в морозильнике."""
@@ -492,10 +492,26 @@ class Database:
                 """,
                 (limit, offset)
             )
-            if page = 1:
-                page_count = self._get_page_count()
+            if page == 1:
+                page_count = self._get_page_count(cursor=cursor)
                 return page_count, [dict(row) for row in cursor.fetchall()]
             return [dict(row) for row in cursor.fetchall()]
+
+    def get_freezer_product(self, product_name: str) -> dict | None:
+        """Возвращает информацию о конкретном продукте в морозильнике."""
+        with self.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT quantity 
+                FROM freezer
+                WHERE product_name = ?
+                """,
+                (product_name,)
+            )
+            result = cursor.fetchone()
+            if result is None:
+                return ValueError(f"Продукт не найден")
+            return {"product_name": product_name, "quantity": int(result[0])}
 
     def new_product(
         self, 
