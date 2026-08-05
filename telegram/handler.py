@@ -1,6 +1,8 @@
 from email import message
 from aiogram import Router
-from aiogram.filters import CommandStart
+from aiogram.filters import Comand, CommandStart
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram import F
 from aiogram.types import (Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, keyboard_button,)
 
@@ -168,7 +170,7 @@ async def defrost_callback(
         db: Database,
     ) -> None:
     page = int(callback.data.removeprefix("defrost_page_"))
-    page_count, keyboard = await btns.defrost_buttons(page = page, db=db)
+    page, page_count, keyboard = await btns.defrost_buttons(page = page, db=db)
     await callback.message.edit_text(
             f"*Выберите продукт:    стр. {page}\{page_count}*", reply_markup=keyboard
         )
