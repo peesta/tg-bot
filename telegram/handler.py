@@ -49,6 +49,34 @@ class ButtonBuilder:
             ],
         ])
 
+    get_product_buttons = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    text="1",
+                    callback_data="defrost_count_1"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="2",
+                    callback_data="defrost_count_2"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="3",
+                    callback_data="defrost_count_3"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📝 Ввести число",
+                    callback_data="defrost_count_self"
+                )
+            ],
+        ])
+
     _page_idx = 0
     _page_count = 0
 
@@ -122,6 +150,7 @@ class ButtonBuilder:
         return self._page_idx, self._page_count, InlineKeyboardMarkup(btns=btns)
 
 
+
 btns = ButtonBuilder()
 
 @router.message(CommandStart())
@@ -140,6 +169,29 @@ async def defrost_callback(
     ) -> None:
     page = int(callback.data.removeprefix("defrost_page_"))
     page_count, keyboard = await btns.defrost_buttons(page = page, db=db)
-    await message.answer(
+    await callback.message.edit_text(
             f"*Выберите продукт:    стр. {page}\{page_count}*", reply_markup=keyboard
         )
+
+@router.callback_query(F.data.startswith("defrost_product_"))
+async def defrost_product_callback(
+        callback: CallbackQuery,
+        db: Database,
+    ) -> None:
+    product_name = callback.data.removeprefix("defrost_product_")
+    product = db.get_freezer_product(product_name)
+    if product is None:
+        await callback.message.answer(
+            f"Продукт {product_name} не найден."
+        )
+        return
+    mess_text = f"""
+        *Вы выбрали продукт:* {product_name}\n
+        *Количество:* {product['quantity']} шт.\n\n
+        *Сколько вы хотите разморозить?:*
+        """
+    keyboard = btns.get_product_buttons
+    await callback.message.edit_text(
+        text=mess_text,
+        reply_markup=keyboard
+    )

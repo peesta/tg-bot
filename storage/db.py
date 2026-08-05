@@ -515,7 +515,7 @@ class Database:
             )
             result = cursor.fetchone()
             if result is None:
-                return ValueError(f"Продукт не найден")
+                return None
             return {"product_name": product_name, "quantity": int(result[0])}
 
     def new_product(
