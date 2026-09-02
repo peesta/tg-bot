@@ -51,7 +51,7 @@ class ButtonBuilder:
             ],
         ])
 
-    get_product_buttons = InlineKeyboardMarkup(
+    product_buttons = InlineKeyboardMarkup(
         [
             [
                 InlineKeyboardButton(
@@ -79,44 +79,14 @@ class ButtonBuilder:
             ],
         ])
 
-    _page_idx = 0
-    _page_count = 0
-
-    async def increase_page_idx(self) -> None:
-        self._page_idx += 1
-        if self._page_idx > self._page_count:
-            self._page_idx = 1
-
-    async def decrease_page_idx(self) -> None:
-        self._page_idx -= 1
-        if self._page_idx < 1:
-            self._page_idx = self._page_count
-
-    async def reset_page(self) -> None:
-        self._page_idx = 0
-        self._page_count = 0
-
-    async def get_page_count(self) -> int:
-        return self._page_count
-
-    async def get_page_idx(self) -> int:
-        return self._page_idx
-
     async def defrost_buttons(self, page: int | None = None, db: Database | None = None) -> tuple[int, int, InlineKeyboardMarkup]:
 
-        if page is not None:
-            self._page_idx = page
-        else: 
-            page = self._page_idx
+        if page is None:
+            page = 1
 
-        if page == 1:
-            page_count, products = db.freezer_products_list(page=page, limit = 3)
-            if page_count is not None:
-                self._page_count = page_count
-        else:
-            page_count, products = db.freezer_products_list(page=page, limit = 3)
-            if page_count is not None:
-                self._page_count = page_count
+        page_count, products = db.freezer_products_list(page=page, limit = 3)
+        if page_count is not None:
+            self._page_count = page_count
 
         if not products:
             return None
@@ -192,7 +162,7 @@ async def defrost_product_callback(
         *Количество:* {product['quantity']} шт.\n\n
         *Сколько вы хотите разморозить?:*
         """
-    keyboard = btns.get_product_buttons
+    keyboard = btns.product_buttons
     await callback.message.edit_text(
         text=mess_text,
         reply_markup=keyboard
