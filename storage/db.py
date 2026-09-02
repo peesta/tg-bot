@@ -471,23 +471,28 @@ class Database:
             )
             return [dict(row) for row in cursor.fetchall()]
 
-    def _get_page_count(self, cursor: sqlite3.Cursor) -> int:
+    def _get_page_count(self, cursor: sqlite3.Cursor, limit: int = 3) -> int:
         """Возвращает количество страниц для холодильника."""
         cursor.execute(
             """
             SELECT COUNT(*) FROM freezer
             """
         )
-        return int(cursor.fetchone()[0])
+        return int(cursor.fetchone()[0])//limit 
 
     def freezer_products_list(self, page: int = 1, limit: int = 3) -> tuple[int, list[dict]]:
         """Возвращает текущие остатки продуктов в морозильнике."""
+
+        if page > limit:
+            return None, None
+
         offset = (page - 1) * limit
         with self.cursor() as cursor:
             cursor.execute(
                 """
                 SELECT product_name, quantity 
                 FROM freezer
+                ORDER BY product_name ASC
                 LIMIT ? OFFSET ?
                 """,
                 (limit, offset)
@@ -495,12 +500,11 @@ class Database:
 
             rows = cursor.fetchall()
             if not rows:
-                return None, None
+                return 0, None
 
-            if page == 1:
-                page_count = self._get_page_count(cursor=cursor)
-                return page_count, [dict(row) for row in rows]
-            return None, [dict(row) for row in rows]
+            
+            page_count = self._get_page_count(cursor=cursor, limit=limit)
+            return page_count, [dict(row) for row in rows]
 
     def get_freezer_product(self, product_name: str) -> dict | None:
         """Возвращает информацию о конкретном продукте в морозильнике."""

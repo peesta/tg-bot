@@ -1,6 +1,6 @@
 from email import message
 from aiogram import Router
-from aiogram.filters import Comand, CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram import F
@@ -85,11 +85,11 @@ class ButtonBuilder:
             page = 1
 
         page_count, products = db.freezer_products_list(page=page, limit = 3)
-        if page_count is not None:
-            self._page_count = page_count
 
-        if not products:
-            return None
+        if page_count == 0:
+            return 0, 0, None
+        elif page_count is None:
+            return None, None, None
 
         btns = [
                 [
@@ -106,7 +106,7 @@ class ButtonBuilder:
                     callback_data=f"defrost_page_{page-1}"
                 )
             ])
-        elif page < self._page_count:
+        if page < page_count:
             btns.append([
                 InlineKeyboardButton(
                     text="Далее ➡️",
@@ -119,7 +119,7 @@ class ButtonBuilder:
                 callback_data = f"defrost_product_{product['product_name']}"
             )
             btns.insert(i, [prod_btn])
-        return self._page_idx, self._page_count, InlineKeyboardMarkup(btns=btns)
+        return page, page_count, InlineKeyboardMarkup(inline_keyboard=btns)
 
 
 
@@ -139,10 +139,25 @@ async def defrost_callback(
         callback: CallbackQuery,
         db: Database,
     ) -> None:
-    page = int(callback.data.removeprefix("defrost_page_"))
+    try:
+        page = int(callback.data.removeprefix("defrost_page_"))
+    except ValueError:
+        page = 1
     page, page_count, keyboard = await btns.defrost_buttons(page = page, db=db)
+
+    if page_count == 0:
+        await callback.message.edit_text(
+            f"*В морозильнике нет продуктов.*", reply_markup=None
+        )
+        return
+    elif page == None and page_count == None and keyboard == None:
+        await callback.message.edit_text(
+            f"*Некорректная страница.*", reply_markup=None
+        )
+        return
+
     await callback.message.edit_text(
-            f"*Выберите продукт:    стр. {page}\{page_count}*", reply_markup=keyboard
+            f"*Выберите продукт:    стр. {page}/{page_count}*", reply_markup=keyboard
         )
 
 @router.callback_query(F.data.startswith("defrost_product_"))
