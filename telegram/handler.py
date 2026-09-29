@@ -12,7 +12,7 @@ router = Router()
 
 class ButtonBuilder:
     main_menu_buttons = InlineKeyboardMarkup(
-        [
+        inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text="📦 Достать из заморозки 📦",
@@ -52,7 +52,7 @@ class ButtonBuilder:
         ])
 
     product_buttons = InlineKeyboardMarkup(
-        [
+        inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text="1",
@@ -81,7 +81,7 @@ class ButtonBuilder:
 
     async def defrost_buttons(self, page: int | None = None, db: Database | None = None) -> tuple[int, int, InlineKeyboardMarkup]:
 
-        if page is None:
+        if page is None or page < 1:
             page = 1
 
         page_count, products = db.freezer_products_list(page=page, limit = 3)
@@ -90,6 +90,8 @@ class ButtonBuilder:
             return 0, 0, None
         elif page_count is None:
             return None, None, None
+        if page > page_count:
+            page = 1
 
         btns = [
                 [

@@ -478,7 +478,7 @@ class Database:
             SELECT COUNT(*) FROM freezer
             """
         )
-        return int(cursor.fetchone()[0])//limit 
+        return int(cursor.fetchone()[0])//limit + 1
 
     def freezer_products_list(self, page: int = 1, limit: int = 3) -> tuple[int, list[dict]]:
         """Возвращает текущие остатки продуктов в морозильнике."""
