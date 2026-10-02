@@ -1,11 +1,23 @@
 import asyncio
+import logging
 import os
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
+from aiogram.types import BotCommand
 from dotenv import load_dotenv
 
 from telegram.handler import router
+from telegram.notifications import notification_loop
 from storage.db import Database
+
+
+BOT_COMMANDS = [
+    BotCommand(command="start", description="Главное меню"),
+    BotCommand(command="cancel", description="Отменить текущее действие"),
+    BotCommand(command="id", description="Мой Telegram ID"),
+]
 
 
 def get_bot_token() -> str:
@@ -21,14 +33,56 @@ def get_bot_token() -> str:
     return token
 
 
+def get_admin_ids() -> frozenset[int]:
+    """Загружает ADMIN_IDS — Telegram ID администраторов через запятую.
+
+    Они всегда имеют доступ к боту, даже если их нет в таблице users.
+    Так появляется первый администратор, который добавит остальных.
+    """
+    load_dotenv()
+    admin_ids = set()
+
+    for part in os.getenv("ADMIN_IDS", "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if not part.isdigit():
+            raise RuntimeError(
+                f"ADMIN_IDS: «{part}» не похоже на Telegram ID"
+            )
+        admin_ids.add(int(part))
+
+    return frozenset(admin_ids)
+
+
 async def main() -> None:
     """Создаёт бота и запускает обработку входящих сообщений."""
-    bot = Bot(token=get_bot_token())
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
+    bot = Bot(
+        token=get_bot_token(),
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
     db = Database("data/database.db")
-    dispatcher = Dispatcher(db=db)
+    admin_ids = get_admin_ids()
+    if not admin_ids:
+        logging.warning(
+            "ADMIN_IDS не задан: в бота попадут только пользователи из "
+            "таблицы users"
+        )
+
+    dispatcher = Dispatcher(db=db, admin_ids=admin_ids)
     dispatcher.include_router(router)
 
-    await dispatcher.start_polling(bot)
+    notifications = asyncio.create_task(notification_loop(bot, db, admin_ids))
+    try:
+        await bot.set_my_commands(BOT_COMMANDS)
+        await dispatcher.start_polling(bot)
+    finally:
+        notifications.cancel()
 
 
 if __name__ == "__main__":
