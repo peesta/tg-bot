@@ -189,6 +189,8 @@ class ButtonBuilder:
         return ButtonBuilder.menu(
             [button("📦 Товары", "prod_page_1")],
             [button("👥 Сотрудники", "user_list")],
+            [button("📤 Экспорт в Google Таблицу", "gsheet_export")],
+            [button("📥 Импорт из Google Таблицы", "gsheet_import")],
         )
 
     @staticmethod

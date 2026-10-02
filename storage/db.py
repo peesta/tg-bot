@@ -925,6 +925,128 @@ class Database:
             )
             return cursor.rowcount > 0
 
+    def stock_tables(self) -> dict[str, list[dict]]:
+        """Возвращает все строки таблиц products, freezer и fridge."""
+        with self.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT name, fridge_storage_time, freezer_storage_time, category
+                FROM products
+                ORDER BY name ASC
+                """
+            )
+            products = [dict(row) for row in cursor.fetchall()]
+
+            cursor.execute(
+                """
+                SELECT product_name, quantity
+                FROM freezer
+                ORDER BY product_name ASC
+                """
+            )
+            freezer = [dict(row) for row in cursor.fetchall()]
+
+            cursor.execute(
+                """
+                SELECT id, product_name, quantity, date_added, expiration_date
+                FROM fridge
+                ORDER BY expiration_date ASC, id ASC
+                """
+            )
+            fridge = [dict(row) for row in cursor.fetchall()]
+
+            return {"products": products, "freezer": freezer, "fridge": fridge}
+
+    def replace_stock_tables(
+        self,
+        products: list[dict],
+        freezer: list[dict],
+        fridge: list[dict],
+    ) -> None:
+        """Заменяет содержимое products, freezer и fridge одной транзакцией.
+
+        Строки должны быть уже проверены. Товары и остатки морозильника,
+        которые были в базе и раньше, сохраняют свои id (rowid): по ним
+        работают кнопки в уже отправленных сообщениях бота. Партии
+        холодильника без id получают новый номер.
+        """
+        with self.cursor() as cursor:
+            cursor.execute("SELECT rowid, name FROM products")
+            product_ids = {row["name"]: row["rowid"] for row in cursor.fetchall()}
+            cursor.execute("SELECT rowid, product_name FROM freezer")
+            freezer_ids = {
+                row["product_name"]: row["rowid"] for row in cursor.fetchall()
+            }
+
+            cursor.execute("DELETE FROM fridge")
+            cursor.execute("DELETE FROM freezer")
+            cursor.execute("DELETE FROM products")
+
+            next_id = max(product_ids.values(), default=0) + 1
+            for product in products:
+                rowid = product_ids.get(product["name"])
+                if rowid is None:
+                    rowid, next_id = next_id, next_id + 1
+                cursor.execute(
+                    """
+                    INSERT INTO products (
+                        rowid, name, fridge_storage_time,
+                        freezer_storage_time, category
+                    )
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        rowid,
+                        product["name"],
+                        product["fridge_storage_time"],
+                        product.get("freezer_storage_time"),
+                        product.get("category"),
+                    ),
+                )
+
+            next_id = max(freezer_ids.values(), default=0) + 1
+            for item in freezer:
+                rowid = freezer_ids.get(item["product_name"])
+                if rowid is None:
+                    rowid, next_id = next_id, next_id + 1
+                cursor.execute(
+                    """
+                    INSERT INTO freezer (rowid, product_name, quantity)
+                    VALUES (?, ?, ?)
+                    """,
+                    (rowid, item["product_name"], item["quantity"]),
+                )
+
+            # Сначала партии с заданным id, чтобы новый номер для партии
+            # без id не занял чужой id из таблицы.
+            for batch in sorted(fridge, key=lambda batch: batch.get("id") is None):
+                cursor.execute(
+                    """
+                    INSERT INTO fridge (
+                        id, product_name, quantity, date_added, expiration_date
+                    )
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        batch.get("id"),
+                        batch["product_name"],
+                        batch["quantity"],
+                        batch["date_added"],
+                        batch["expiration_date"],
+                    ),
+                )
+
+    def backup(self, path: str) -> None:
+        """Сохраняет копию базы данных в файл path."""
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        source = self.get_conn()
+        target = sqlite3.connect(path)
+        try:
+            source.backup(target)
+        finally:
+            target.close()
+            source.close()
+
     def log_error(self, error_type: str, error_message: str) -> None:
         """Записывает ошибку в таблицу errors."""
         with self.cursor() as cursor:

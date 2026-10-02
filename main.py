@@ -54,6 +54,12 @@ def get_admin_ids() -> frozenset[int]:
     return frozenset(admin_ids)
 
 
+def get_google_table() -> str | None:
+    """Загружает GOOGLE_TABLE — ссылку на Google Таблицу или её ID."""
+    load_dotenv()
+    return os.getenv("GOOGLE_TABLE", "").strip() or None
+
+
 async def main() -> None:
     """Создаёт бота и запускает обработку входящих сообщений."""
     logging.basicConfig(
@@ -73,7 +79,16 @@ async def main() -> None:
             "таблицы users"
         )
 
-    dispatcher = Dispatcher(db=db, admin_ids=admin_ids)
+    google_table = get_google_table()
+    if google_table is None:
+        logging.warning(
+            "GOOGLE_TABLE не задан: экспорт и импорт Google Таблицы "
+            "работать не будут"
+        )
+
+    dispatcher = Dispatcher(
+        db=db, admin_ids=admin_ids, google_table=google_table
+    )
     dispatcher.include_router(router)
 
     await bot.set_my_commands(BOT_COMMANDS)

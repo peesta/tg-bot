@@ -1,8 +1,8 @@
 from aiogram import Router
 
 from telegram.handlers import (
-    common, defrost, delivery, expiring, history, menu, products, settings,
-    stock, users, write_off,
+    common, defrost, delivery, expiring, google_sheets, history, menu,
+    products, settings, stock, users, write_off,
 )
 from telegram.middlewares import (
     AccessMiddleware, DailyNotificationMiddleware, ResetStateMiddleware,
@@ -31,5 +31,6 @@ router.include_routers(
     settings.router,
     products.router,
     users.router,
+    google_sheets.router,
     common.router,  # последним: необработанные сообщения, кнопки и ошибки
 )
