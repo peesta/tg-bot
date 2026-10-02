@@ -11,6 +11,8 @@ from aiogram.types import CallbackQuery, Message, TelegramObject
 from aiogram.utils.callback_answer import CallbackAnswer, CallbackAnswerMiddleware
 
 from storage.db import Database
+from telegram.notifications import send_expiring_notification
+from telegram.utils import today
 
 
 Handler = Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]]
@@ -60,6 +62,39 @@ class AccessMiddleware(BaseMiddleware):
             f"Ваш Telegram ID: <code>{telegram_id}</code>\n"
             "Передайте его администратору, чтобы он добавил вас."
         )
+
+
+class DailyNotificationMiddleware(BaseMiddleware):
+    """После первого за день действия пользователя присылает ему список
+    продуктов, у которых истекает срок годности.
+
+    Расписание смен к боту не подключено, поэтому уведомление получает тот,
+    кто сегодня начал работать с ботом, — каждый пользователь не больше
+    одного раза в день. Подключается после AccessMiddleware, чтобы
+    пользователи без доступа уведомлений не получали.
+    """
+
+    async def __call__(
+        self,
+        handler: Handler,
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        db: Database = data["db"]
+        telegram_id = event.from_user.id
+        is_first_today = db.mark_daily_notification(telegram_id, today())
+
+        try:
+            return await handler(event, data)
+        finally:
+            # Если пользователь первым делом открыл «Сегодня заканчивается
+            # срок», он уже видит тот же список — второй раз не присылаем.
+            opened_expiring = (
+                isinstance(event, CallbackQuery)
+                and (event.data or "").startswith("expiring")
+            )
+            if is_first_today and not opened_expiring:
+                await send_expiring_notification(data["bot"], db, telegram_id)
 
 
 class ResetStateMiddleware(BaseMiddleware):

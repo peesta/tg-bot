@@ -9,7 +9,6 @@ from aiogram.types import BotCommand
 from dotenv import load_dotenv
 
 from telegram.handler import router
-from telegram.notifications import notification_loop
 from storage.db import Database
 
 
@@ -77,12 +76,8 @@ async def main() -> None:
     dispatcher = Dispatcher(db=db, admin_ids=admin_ids)
     dispatcher.include_router(router)
 
-    notifications = asyncio.create_task(notification_loop(bot, db, admin_ids))
-    try:
-        await bot.set_my_commands(BOT_COMMANDS)
-        await dispatcher.start_polling(bot)
-    finally:
-        notifications.cancel()
+    await bot.set_my_commands(BOT_COMMANDS)
+    await dispatcher.start_polling(bot)
 
 
 if __name__ == "__main__":

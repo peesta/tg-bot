@@ -15,7 +15,6 @@ ROLE_TITLES = {
 }
 
 QUICK_STORAGE_DAYS = (1, 2, 3, 5, 7)
-QUICK_NOTIFY_TIMES = ("07:00", "08:00", "09:00", "10:00")
 
 Rows = list[list[InlineKeyboardButton]]
 
@@ -190,18 +189,6 @@ class ButtonBuilder:
         return ButtonBuilder.menu(
             [button("📦 Товары", "prod_page_1")],
             [button("👥 Сотрудники", "user_list")],
-            [button("⏰ Время уведомления", "notify")],
-        )
-
-    @staticmethod
-    def notify() -> InlineKeyboardMarkup:
-        return ButtonBuilder.menu(
-            [
-                button(time, f"notify_set_{time.replace(':', '')}")
-                for time in QUICK_NOTIFY_TIMES
-            ],
-            [button("✏️ Ввести своё время", "notify_edit")],
-            [button("⬅️ Настройки", "settings")],
         )
 
     @staticmethod

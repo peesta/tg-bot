@@ -53,9 +53,9 @@ CREATE TABLE IF NOT EXISTS errors (
     error_message TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
+CREATE TABLE IF NOT EXISTS daily_notifications (
+    telegram_id INTEGER PRIMARY KEY,
+    last_date TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_operations_created_at
@@ -905,24 +905,25 @@ class Database:
             )
             return page_count, [dict(row) for row in cursor.fetchall()]
 
-    def get_setting(self, key: str, default: str | None = None) -> str | None:
-        """Возвращает значение настройки или default."""
-        with self.cursor() as cursor:
-            cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
-            row = cursor.fetchone()
-            return default if row is None else row["value"]
+    def mark_daily_notification(self, telegram_id: int, date: str) -> bool:
+        """Отмечает, что пользователь получил уведомление за дату date.
 
-    def set_setting(self, key: str, value: str) -> None:
-        """Сохраняет значение настройки."""
+        Возвращает True, если за этот день отметки ещё не было, — то есть
+        уведомление нужно отправить. Проверка и отметка выполняются одним
+        запросом, поэтому два одновременных нажатия не дадут двух уведомлений.
+        """
         with self.cursor() as cursor:
             cursor.execute(
                 """
-                INSERT INTO settings (key, value)
+                INSERT INTO daily_notifications (telegram_id, last_date)
                 VALUES (?, ?)
-                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                ON CONFLICT(telegram_id) DO UPDATE
+                    SET last_date = excluded.last_date
+                    WHERE daily_notifications.last_date <> excluded.last_date
                 """,
-                (key, value),
+                (telegram_id, date),
             )
+            return cursor.rowcount > 0
 
     def log_error(self, error_type: str, error_message: str) -> None:
         """Записывает ошибку в таблицу errors."""

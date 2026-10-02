@@ -30,6 +30,3 @@ class UserStates(StatesGroup):
     full_name = State()
     role = State()
 
-
-class NotifyStates(StatesGroup):
-    time = State()

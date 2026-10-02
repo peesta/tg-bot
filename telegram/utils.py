@@ -1,5 +1,4 @@
 import html
-import re
 from datetime import datetime
 
 from aiogram.exceptions import TelegramBadRequest
@@ -12,9 +11,6 @@ MAX_QUANTITY = 100_000
 MAX_STORAGE_DAYS = 365
 MAX_NAME_LENGTH = 60
 MAX_MESSAGE_LENGTH = 4096
-
-NOTIFY_TIME_KEY = "notify_time"
-DEFAULT_NOTIFY_TIME = "09:00"
 
 
 def esc(value: object) -> str:
@@ -63,19 +59,6 @@ def parse_positive_int(text: str | None) -> int | None:
     except ValueError:
         return None
     return value if value > 0 else None
-
-
-def parse_time(text: str | None) -> str | None:
-    """Принимает «9», «9:30», «09:30», «9.30» и возвращает «09:30»."""
-    if text is None:
-        return None
-    match = re.fullmatch(r"(\d{1,2})(?:[:.](\d{2}))?", text.strip())
-    if match is None:
-        return None
-    hours, minutes = int(match.group(1)), int(match.group(2) or 0)
-    if hours > 23 or minutes > 59:
-        return None
-    return f"{hours:02d}:{minutes:02d}"
 
 
 def clean_name(text: str | None) -> str:
