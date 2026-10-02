@@ -27,13 +27,10 @@ CREATE TABLE IF NOT EXISTS freezer (
 );
 
 CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT NOT NULL,
-    password_hash TEXT,
+    telegram_id INTEGER PRIMARY KEY,
     full_name TEXT NOT NULL,
     role TEXT NOT NULL CHECK (role IN ('admin', 'employee')),
-    is_active BOOLEAN NOT NULL DEFAULT FALSE,
-    last_login TEXT
+    is_active BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 CREATE TABLE IF NOT EXISTS operations (
@@ -47,33 +44,19 @@ CREATE TABLE IF NOT EXISTS operations (
     created_at TEXT NOT NULL,
     created_by INTEGER NOT NULL,
     FOREIGN KEY (batch_id) REFERENCES fridge(id),
-    FOREIGN KEY (created_by) REFERENCES users(id)
+    FOREIGN KEY (created_by) REFERENCES users(telegram_id)
 );
 
 CREATE TABLE IF NOT EXISTS errors (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     error_type TEXT NOT NULL,
-    error_message TEXT NOT NULL,
-    created_at TEXT
+    error_message TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS daily_notifications (
-    user_id INTEGER PRIMARY KEY,
+    telegram_id INTEGER PRIMARY KEY,
     last_date TEXT NOT NULL
 );
-
-CREATE TABLE IF NOT EXISTS audit_log (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    created_at TEXT NOT NULL,
-    user_id INTEGER,
-    username TEXT,
-    action TEXT NOT NULL,
-    details TEXT,
-    ip TEXT
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username
-    ON users(username COLLATE NOCASE);
 
 CREATE INDEX IF NOT EXISTS idx_operations_created_at
     ON operations(created_at);
@@ -84,29 +67,6 @@ CREATE INDEX IF NOT EXISTS idx_operations_created_by
 
 SYSTEM_USER_ID = 0
 USER_ROLES = ("admin", "employee")
-OPERATION_TYPES = ("delivery", "defrost", "sale", "write_off")
-# Журнал действий только читается: иначе в нём можно было бы скрыть правки.
-READ_ONLY_TABLES = ("audit_log",)
-
-
-def normalize_text(text: object) -> str | None:
-    """Текст для поиска без учёта регистра и разницы между «е» и «ё».
-
-    Подключается к SQLite функцией normalize(): встроенные LOWER и LIKE
-    не понимают регистр кириллицы.
-    """
-    if text is None:
-        return None
-    return str(text).casefold().replace("ё", "е")
-
-
-def quote_identifier(name: str) -> str:
-    """Название таблицы или столбца для подстановки в SQL."""
-    return '"' + name.replace('"', '""') + '"'
-
-
-def now_text() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 class Database:
@@ -123,55 +83,14 @@ class Database:
     def _initialize_database(self) -> None:
         connection = self.get_conn()
         try:
-            self._migrate(connection)
             connection.executescript(DATABASE_SCHEMA)
             connection.commit()
         finally:
             connection.close()
 
-    @staticmethod
-    def _columns(connection: sqlite3.Connection, table: str) -> list[str]:
-        return [
-            row["name"]
-            for row in connection.execute(
-                f"PRAGMA table_info({quote_identifier(table)})"
-            )
-        ]
-
-    def _migrate(self, connection: sqlite3.Connection) -> None:
-        """Переводит базу Telegram-бота на схему сайта.
-
-        Пользователь бота сохраняет номер (бывший Telegram ID), поэтому
-        журнал операций по-прежнему показывает его имя. Логин у него
-        вида tg123456789, пароля нет: войти он сможет, когда администратор
-        задаст пароль.
-        """
-        if "telegram_id" in self._columns(connection, "users"):
-            # Переименование столбца обновляет и ссылку из operations.
-            connection.execute(
-                "ALTER TABLE users RENAME COLUMN telegram_id TO id"
-            )
-            for column in ("username", "password_hash", "last_login"):
-                connection.execute(f"ALTER TABLE users ADD COLUMN {column} TEXT")
-            connection.execute("UPDATE users SET username = 'tg' || id")
-
-        if "telegram_id" in self._columns(connection, "daily_notifications"):
-            connection.execute(
-                "ALTER TABLE daily_notifications "
-                "RENAME COLUMN telegram_id TO user_id"
-            )
-
-        error_columns = self._columns(connection, "errors")
-        if error_columns and "created_at" not in error_columns:
-            connection.execute("ALTER TABLE errors ADD COLUMN created_at TEXT")
-        connection.commit()
-
     def get_conn(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path_to_db)
         connection.row_factory = sqlite3.Row
-        connection.create_function(
-            "normalize", 1, normalize_text, deterministic=True
-        )
         return connection
 
     @contextmanager
@@ -740,7 +659,7 @@ class Database:
             cursor.execute(
                 """
                 SELECT rowid AS id, name, fridge_storage_time,
-                    freezer_storage_time, category
+                    freezer_storage_time
                 FROM products
                 WHERE name = ?
                 """,
@@ -755,7 +674,7 @@ class Database:
             cursor.execute(
                 """
                 SELECT rowid AS id, name, fridge_storage_time,
-                    freezer_storage_time, category
+                    freezer_storage_time
                 FROM products
                 WHERE rowid = ?
                 """,
@@ -767,107 +686,23 @@ class Database:
     def new_product(
         self, 
         name: str, 
-        fridge_storage_time: int,
-        freezer_storage_time: int | None = None,
-        category: str | None = None,
+        fridge_storage_time: int
     ) -> None:
         """Добавляет в таблицу продуктов новые продукты"""
         self._validate_quantity(fridge_storage_time)
-        if freezer_storage_time is not None:
-            self._validate_quantity(freezer_storage_time)
 
         with self.cursor() as cursor:
             try:
                 cursor.execute(
                     """
-                    INSERT INTO products (
-                        name, fridge_storage_time, freezer_storage_time,
-                        category
-                    )
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (name, fridge_storage_time, freezer_storage_time, category),
+                    INSERT INTO products (name, fridge_storage_time)
+                    VALUES (?,?)
+                    """, (name, fridge_storage_time),
                 )
             except sqlite3.IntegrityError:
                 raise ValueError(f"{name} уже есть в базе данных")
             
             return
-
-    def update_product(
-        self,
-        name: str,
-        new_name: str,
-        fridge_storage_time: int,
-        freezer_storage_time: int | None,
-        category: str | None,
-    ) -> None:
-        """Записывает все поля товара; None очищает необязательные поля.
-
-        При переименовании название меняется и у остатков в морозильнике
-        и холодильнике, как в edit_product.
-        """
-        self._validate_quantity(fridge_storage_time)
-        if freezer_storage_time is not None:
-            self._validate_quantity(freezer_storage_time)
-
-        with self.cursor() as cursor:
-            try:
-                cursor.execute(
-                    """
-                    UPDATE products
-                    SET name = ?, fridge_storage_time = ?,
-                        freezer_storage_time = ?, category = ?
-                    WHERE name = ?
-                    """,
-                    (
-                        new_name, fridge_storage_time, freezer_storage_time,
-                        category, name,
-                    ),
-                )
-                if cursor.rowcount == 0:
-                    raise ValueError(f"Нет продукта с именем {name}")
-
-                if new_name != name:
-                    cursor.execute(
-                        "UPDATE freezer SET product_name = ? WHERE product_name = ?",
-                        (new_name, name),
-                    )
-                    cursor.execute(
-                        "UPDATE fridge SET product_name = ? WHERE product_name = ?",
-                        (new_name, name),
-                    )
-            except sqlite3.IntegrityError:
-                raise ValueError(f"{new_name} уже есть в базе данных")
-
-    def catalog(self) -> list[dict]:
-        """Справочник товаров с остатком в морозильнике, по названию."""
-        with self.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT products.rowid AS id, products.name,
-                    products.fridge_storage_time,
-                    products.freezer_storage_time, products.category,
-                    COALESCE(freezer.quantity, 0) AS freezer_quantity
-                FROM products
-                LEFT JOIN freezer ON freezer.product_name = products.name
-                ORDER BY products.name ASC
-                """
-            )
-            return [dict(row) for row in cursor.fetchall()]
-
-    def freezer_items(self) -> list[dict]:
-        """Остатки морозильника со сроком хранения после разморозки."""
-        with self.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT freezer.rowid AS id, freezer.product_name,
-                    freezer.quantity, products.fridge_storage_time
-                FROM freezer
-                LEFT JOIN products ON products.name = freezer.product_name
-                ORDER BY freezer.product_name ASC
-                """
-            )
-            return [dict(row) for row in cursor.fetchall()]
 
     def edit_product(
         self,
@@ -954,31 +789,16 @@ class Database:
         if role not in USER_ROLES:
             raise ValueError(f"Неизвестная роль {role}")
 
-    def get_user(self, user_id: int) -> dict | None:
-        """Возвращает пользователя (вместе с хешем пароля) или None."""
+    def get_user(self, telegram_id: int) -> dict | None:
+        """Возвращает пользователя по Telegram ID или None."""
         with self.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, username, password_hash, full_name, role,
-                    is_active, last_login
+                SELECT telegram_id, full_name, role, is_active
                 FROM users
-                WHERE id = ?
+                WHERE telegram_id = ?
                 """,
-                (user_id,)
-            )
-            return self._user_from_row(cursor.fetchone())
-
-    def get_user_by_username(self, username: str) -> dict | None:
-        """Возвращает пользователя по логину без учёта регистра или None."""
-        with self.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT id, username, password_hash, full_name, role,
-                    is_active, last_login
-                FROM users
-                WHERE username = ? COLLATE NOCASE
-                """,
-                (username,)
+                (telegram_id,)
             )
             return self._user_from_row(cursor.fetchone())
 
@@ -987,8 +807,7 @@ class Database:
         with self.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, username, full_name, role, is_active, last_login,
-                    password_hash IS NOT NULL AS has_password
+                SELECT telegram_id, full_name, role, is_active
                 FROM users
                 ORDER BY role = 'admin' DESC, full_name ASC
                 """
@@ -996,76 +815,55 @@ class Database:
             return [self._user_from_row(row) for row in cursor.fetchall()]
 
     def active_users_ids(self) -> list[int]:
-        """Возвращает id всех пользователей с доступом."""
+        """Возвращает Telegram ID всех пользователей с доступом."""
         with self.cursor() as cursor:
-            cursor.execute("SELECT id FROM users WHERE is_active")
-            return [row["id"] for row in cursor.fetchall()]
-
-    def has_login_users(self) -> bool:
-        """Есть ли хоть один пользователь, который может войти на сайт."""
-        with self.cursor() as cursor:
-            cursor.execute(
-                "SELECT 1 FROM users WHERE password_hash IS NOT NULL LIMIT 1"
-            )
-            return cursor.fetchone() is not None
+            cursor.execute("SELECT telegram_id FROM users WHERE is_active")
+            return [row["telegram_id"] for row in cursor.fetchall()]
 
     def add_user(
         self,
-        username: str,
+        telegram_id: int,
         full_name: str,
-        password_hash: str | None,
         role: str = "employee"
-    ) -> int:
-        """Добавляет пользователя с доступом к сайту и возвращает его id."""
+    ) -> None:
+        """Добавляет пользователя с доступом к боту."""
         self._validate_role(role)
 
         with self.cursor() as cursor:
             try:
                 cursor.execute(
                     """
-                    INSERT INTO users (
-                        username, password_hash, full_name, role, is_active
-                    )
-                    VALUES (?, ?, ?, ?, TRUE)
+                    INSERT INTO users (telegram_id, full_name, role, is_active)
+                    VALUES (?, ?, ?, TRUE)
                     """,
-                    (username, password_hash, full_name, role),
+                    (telegram_id, full_name, role),
                 )
             except sqlite3.IntegrityError:
-                raise ValueError(f"Логин {username} уже занят")
-            return cursor.lastrowid
-
-    def _update_user(self, user_id: int, column: str, value: object) -> None:
-        with self.cursor() as cursor:
-            try:
-                cursor.execute(
-                    f"UPDATE users SET {column} = ? WHERE id = ?",
-                    (value, user_id),
+                raise ValueError(
+                    f"Пользователь {telegram_id} уже есть в базе данных"
                 )
-            except sqlite3.IntegrityError:
-                raise ValueError(f"Логин {value} уже занят")
-            if cursor.rowcount == 0:
-                raise ValueError(f"Нет пользователя {user_id}")
 
-    def set_user_role(self, user_id: int, role: str) -> None:
+    def set_user_role(self, telegram_id: int, role: str) -> None:
         """Назначает пользователю роль admin или employee."""
         self._validate_role(role)
-        self._update_user(user_id, "role", role)
 
-    def set_user_active(self, user_id: int, is_active: bool) -> None:
-        """Включает или отключает пользователю доступ к сайту."""
-        self._update_user(user_id, "is_active", bool(is_active))
+        with self.cursor() as cursor:
+            cursor.execute(
+                "UPDATE users SET role = ? WHERE telegram_id = ?",
+                (role, telegram_id),
+            )
+            if cursor.rowcount == 0:
+                raise ValueError(f"Нет пользователя {telegram_id}")
 
-    def set_user_password(self, user_id: int, password_hash: str) -> None:
-        self._update_user(user_id, "password_hash", password_hash)
-
-    def set_user_name(self, user_id: int, full_name: str) -> None:
-        self._update_user(user_id, "full_name", full_name)
-
-    def set_user_username(self, user_id: int, username: str) -> None:
-        self._update_user(user_id, "username", username)
-
-    def touch_last_login(self, user_id: int) -> None:
-        self._update_user(user_id, "last_login", now_text())
+    def set_user_active(self, telegram_id: int, is_active: bool) -> None:
+        """Включает или отключает пользователю доступ к боту."""
+        with self.cursor() as cursor:
+            cursor.execute(
+                "UPDATE users SET is_active = ? WHERE telegram_id = ?",
+                (bool(is_active), telegram_id),
+            )
+            if cursor.rowcount == 0:
+                raise ValueError(f"Нет пользователя {telegram_id}")
 
     def write_off_history(
         self,
@@ -1098,7 +896,7 @@ class Database:
                     operations.created_at, operations.created_by,
                     users.full_name
                 FROM operations
-                LEFT JOIN users ON users.id = operations.created_by
+                LEFT JOIN users ON users.telegram_id = operations.created_by
                 WHERE operations.operation_type = 'write_off'
                 ORDER BY operations.id DESC
                 LIMIT ? OFFSET ?
@@ -1107,7 +905,7 @@ class Database:
             )
             return page_count, [dict(row) for row in cursor.fetchall()]
 
-    def mark_daily_notification(self, user_id: int, date: str) -> bool:
+    def mark_daily_notification(self, telegram_id: int, date: str) -> bool:
         """Отмечает, что пользователь получил уведомление за дату date.
 
         Возвращает True, если за этот день отметки ещё не было, — то есть
@@ -1117,13 +915,13 @@ class Database:
         with self.cursor() as cursor:
             cursor.execute(
                 """
-                INSERT INTO daily_notifications (user_id, last_date)
+                INSERT INTO daily_notifications (telegram_id, last_date)
                 VALUES (?, ?)
-                ON CONFLICT(user_id) DO UPDATE
+                ON CONFLICT(telegram_id) DO UPDATE
                     SET last_date = excluded.last_date
                     WHERE daily_notifications.last_date <> excluded.last_date
                 """,
-                (user_id, date),
+                (telegram_id, date),
             )
             return cursor.rowcount > 0
 
@@ -1169,7 +967,7 @@ class Database:
 
         Строки должны быть уже проверены. Товары и остатки морозильника,
         которые были в базе и раньше, сохраняют свои id (rowid): по ним
-        работают ссылки и формы на уже открытых страницах сайта. Партии
+        работают кнопки в уже отправленных сообщениях бота. Партии
         холодильника без id получают новый номер.
         """
         with self.cursor() as cursor:
@@ -1249,337 +1047,13 @@ class Database:
             target.close()
             source.close()
 
-    def restore(self, path: str) -> None:
-        """Заменяет базу данных копией из файла path.
-
-        Копия от Telegram-бота переводится на схему сайта.
-        """
-        source = sqlite3.connect(f"{Path(path).resolve().as_uri()}?mode=ro", uri=True)
-        try:
-            try:
-                source.execute("SELECT name FROM sqlite_master").fetchall()
-            except sqlite3.DatabaseError as error:
-                raise ValueError(f"Файл не похож на базу данных: {error}")
-            target = sqlite3.connect(self.path_to_db)
-            try:
-                source.backup(target)
-            finally:
-                target.close()
-        finally:
-            source.close()
-        self._initialize_database()
-
     def log_error(self, error_type: str, error_message: str) -> None:
         """Записывает ошибку в таблицу errors."""
         with self.cursor() as cursor:
             cursor.execute(
                 """
-                INSERT INTO errors (error_type, error_message, created_at)
-                VALUES (?, ?, ?)
+                INSERT INTO errors (error_type, error_message)
+                VALUES (?, ?)
                 """,
-                (error_type, error_message, now_text()),
+                (error_type, error_message),
             )
-
-    @staticmethod
-    def _page(
-        cursor: sqlite3.Cursor,
-        select: str,
-        where: str,
-        params: list,
-        order: str,
-        page: int,
-        limit: int,
-    ) -> tuple[int, list[dict]]:
-        """Число строк и строки страницы page (страницы с единицы)."""
-        cursor.execute(f"SELECT COUNT(*) {where}", params)
-        total = int(cursor.fetchone()[0])
-        cursor.execute(
-            f"{select} {where} ORDER BY {order} LIMIT ? OFFSET ?",
-            [*params, limit, (max(page, 1) - 1) * limit],
-        )
-        return total, [dict(row) for row in cursor.fetchall()]
-
-    def errors_list(self, page: int = 1, limit: int = 20) -> tuple[int, list[dict]]:
-        """Ошибки сайта, новые первыми: (всего, строки страницы)."""
-        with self.cursor() as cursor:
-            return self._page(
-                cursor,
-                "SELECT id, error_type, error_message, created_at",
-                "FROM errors", [], "id DESC", page, limit,
-            )
-
-    def log_action(
-        self,
-        action: str,
-        details: str | None = None,
-        user_id: int | None = None,
-        username: str | None = None,
-        ip: str | None = None,
-    ) -> None:
-        """Записывает действие пользователя сайта в журнал audit_log."""
-        with self.cursor() as cursor:
-            cursor.execute(
-                """
-                INSERT INTO audit_log (
-                    created_at, user_id, username, action, details, ip
-                )
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (now_text(), user_id, username, action, details, ip),
-            )
-
-    def audit_list(
-        self,
-        page: int = 1,
-        limit: int = 50,
-        action: str | None = None,
-        query: str | None = None,
-    ) -> tuple[int, list[dict]]:
-        """Журнал действий, новые первыми: (всего, строки страницы)."""
-        conditions, params = [], []
-        if action:
-            conditions.append("action = ?")
-            params.append(action)
-        if query:
-            conditions.append(
-                "(instr(normalize(username), ?) > 0 "
-                "OR instr(normalize(details), ?) > 0)"
-            )
-            params += [normalize_text(query)] * 2
-        where = "FROM audit_log"
-        if conditions:
-            where += " WHERE " + " AND ".join(conditions)
-
-        with self.cursor() as cursor:
-            return self._page(
-                cursor,
-                "SELECT id, created_at, user_id, username, action, details, ip",
-                where, params, "id DESC", page, limit,
-            )
-
-    def operations_log(
-        self,
-        page: int = 1,
-        limit: int = 50,
-        operation_type: str | None = None,
-        user_id: int | None = None,
-        query: str | None = None,
-        date_from: str | None = None,
-        date_to: str | None = None,
-    ) -> tuple[int, list[dict]]:
-        """Журнал операций с фильтрами, новые первыми: (всего, строки).
-
-        date_from и date_to — даты ГГГГ-ММ-ДД включительно.
-        """
-        conditions, params = [], []
-        if operation_type:
-            conditions.append("operations.operation_type = ?")
-            params.append(operation_type)
-        if user_id is not None:
-            conditions.append("operations.created_by = ?")
-            params.append(user_id)
-        if query:
-            conditions.append(
-                "(instr(normalize(operations.product_name), ?) > 0 "
-                "OR instr(normalize(operations.reason), ?) > 0)"
-            )
-            params += [normalize_text(query)] * 2
-        if date_from:
-            conditions.append("operations.created_at >= ?")
-            params.append(date_from)
-        if date_to:
-            # «2026-10-02 23:59» < «2026-10-02~»: тильда больше цифр и пробела.
-            conditions.append("operations.created_at < ?")
-            params.append(f"{date_to}~")
-        where = (
-            "FROM operations "
-            "LEFT JOIN users ON users.id = operations.created_by"
-        )
-        if conditions:
-            where += " WHERE " + " AND ".join(conditions)
-
-        with self.cursor() as cursor:
-            return self._page(
-                cursor,
-                "SELECT operations.id, operations.operation_type, "
-                "operations.product_name, operations.batch_id, "
-                "operations.quantity, operations.reason, "
-                "operations.created_at, operations.created_by, "
-                "users.full_name",
-                where, params, "operations.id DESC", page, limit,
-            )
-
-    def stats(self) -> dict[str, int]:
-        """Сводка для главной страницы администратора."""
-        today = datetime.now().strftime("%Y-%m-%d")
-        queries = {
-            "products": ("SELECT COUNT(*) FROM products", ()),
-            "freezer_items": ("SELECT COUNT(*) FROM freezer", ()),
-            "freezer_quantity": (
-                "SELECT COALESCE(SUM(quantity), 0) FROM freezer", ()
-            ),
-            "fridge_batches": ("SELECT COUNT(*) FROM fridge", ()),
-            "fridge_quantity": (
-                "SELECT COALESCE(SUM(quantity), 0) FROM fridge", ()
-            ),
-            "expiring_today": (
-                "SELECT COUNT(*) FROM fridge WHERE expiration_date = ?",
-                (today,),
-            ),
-            "expired": (
-                "SELECT COUNT(*) FROM fridge WHERE expiration_date < ?",
-                (today,),
-            ),
-            "operations_today": (
-                "SELECT COUNT(*) FROM operations WHERE created_at >= ?",
-                (today,),
-            ),
-            "errors_today": (
-                "SELECT COUNT(*) FROM errors WHERE created_at >= ?",
-                (today,),
-            ),
-            "active_users": (
-                "SELECT COUNT(*) FROM users WHERE is_active", ()
-            ),
-        }
-        with self.cursor() as cursor:
-            result = {}
-            for key, (sql, params) in queries.items():
-                cursor.execute(sql, params)
-                result[key] = int(cursor.fetchone()[0])
-            return result
-
-    # ---------- Редактор таблиц для администратора ----------
-
-    def table_names(self) -> list[str]:
-        """Таблицы базы данных, кроме служебных таблиц SQLite."""
-        with self.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT name FROM sqlite_master
-                WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
-                ORDER BY name
-                """
-            )
-            return [row["name"] for row in cursor.fetchall()]
-
-    def _check_table(self, table: str) -> None:
-        if table not in self.table_names():
-            raise KeyError(table)
-
-    def table_columns(self, table: str) -> list[dict]:
-        """Столбцы таблицы: name, type, notnull, default, pk."""
-        self._check_table(table)
-        with self.cursor() as cursor:
-            cursor.execute(f"PRAGMA table_info({quote_identifier(table)})")
-            return [
-                {
-                    "name": row["name"],
-                    "type": (row["type"] or "").upper(),
-                    "notnull": bool(row["notnull"]),
-                    "default": row["dflt_value"],
-                    "pk": bool(row["pk"]),
-                }
-                for row in cursor.fetchall()
-            ]
-
-    def table_count(self, table: str) -> int:
-        self._check_table(table)
-        with self.cursor() as cursor:
-            cursor.execute(f"SELECT COUNT(*) FROM {quote_identifier(table)}")
-            return int(cursor.fetchone()[0])
-
-    def table_rows(
-        self,
-        table: str,
-        page: int = 1,
-        limit: int = 50,
-        query: str | None = None,
-        sort: str | None = None,
-        descending: bool = False,
-    ) -> tuple[int, list[dict]]:
-        """Строки таблицы с поиском по всем столбцам: (всего, строки).
-
-        У каждой строки есть ключ __rowid — по нему строку редактируют.
-        """
-        columns = [column["name"] for column in self.table_columns(table)]
-        params: list = []
-        where = f"FROM {quote_identifier(table)}"
-        if query:
-            where += " WHERE " + " OR ".join(
-                f"instr(normalize({quote_identifier(name)}), ?) > 0"
-                for name in columns
-            )
-            params = [normalize_text(query)] * len(columns)
-        order = quote_identifier(sort) if sort in columns else "rowid"
-        order += " DESC" if descending else " ASC"
-
-        with self.cursor() as cursor:
-            return self._page(
-                cursor, "SELECT rowid AS __rowid, *", where, params,
-                order, page, limit,
-            )
-
-    def table_row(self, table: str, rowid: int) -> dict | None:
-        self._check_table(table)
-        with self.cursor() as cursor:
-            cursor.execute(
-                f"SELECT rowid AS __rowid, * FROM {quote_identifier(table)} "
-                "WHERE rowid = ?",
-                (rowid,),
-            )
-            row = cursor.fetchone()
-            return None if row is None else dict(row)
-
-    def _check_writable(self, table: str, values: dict) -> list[str]:
-        if table in READ_ONLY_TABLES:
-            raise ValueError(f"Таблица {table} только для чтения")
-        columns = [column["name"] for column in self.table_columns(table)]
-        unknown = [name for name in values if name not in columns]
-        if unknown:
-            raise ValueError(f"Нет столбцов: {', '.join(unknown)}")
-        return columns
-
-    def insert_row(self, table: str, values: dict) -> int:
-        """Добавляет строку и возвращает её rowid."""
-        self._check_writable(table, values)
-        names = ", ".join(map(quote_identifier, values))
-        marks = ", ".join("?" for _ in values)
-        sql = (
-            f"INSERT INTO {quote_identifier(table)} ({names}) VALUES ({marks})"
-            if values else
-            f"INSERT INTO {quote_identifier(table)} DEFAULT VALUES"
-        )
-        with self.cursor() as cursor:
-            try:
-                cursor.execute(sql, list(values.values()))
-            except sqlite3.Error as error:
-                raise ValueError(f"База данных не приняла строку: {error}")
-            return cursor.lastrowid
-
-    def update_row(self, table: str, rowid: int, values: dict) -> None:
-        self._check_writable(table, values)
-        if not values:
-            return
-        assignments = ", ".join(f"{quote_identifier(name)} = ?" for name in values)
-        with self.cursor() as cursor:
-            try:
-                cursor.execute(
-                    f"UPDATE {quote_identifier(table)} SET {assignments} "
-                    "WHERE rowid = ?",
-                    [*values.values(), rowid],
-                )
-            except sqlite3.Error as error:
-                raise ValueError(f"База данных не приняла изменения: {error}")
-            if cursor.rowcount == 0:
-                raise ValueError("Строка не найдена: возможно, её уже удалили")
-
-    def delete_row(self, table: str, rowid: int) -> None:
-        self._check_writable(table, {})
-        with self.cursor() as cursor:
-            cursor.execute(
-                f"DELETE FROM {quote_identifier(table)} WHERE rowid = ?",
-                (rowid,),
-            )
-            if cursor.rowcount == 0:
-                raise ValueError("Строка не найдена: возможно, её уже удалили")

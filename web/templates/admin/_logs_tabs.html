@@ -1,9 +1,0 @@
-<div class="page-header">
-  <div><h1>📜 Логи</h1><p class="muted">Что делали сотрудники, кто входил на сайт и что ломалось.</p></div>
-</div>
-<nav class="tabs" aria-label="Разделы логов">
-  <a href="{{ url_for('logs.operations') }}" class="{% if tab == 'operations' %}active{% endif %}">Операции</a>
-  <a href="{{ url_for('logs.audit_log') }}" class="{% if tab == 'audit' %}active{% endif %}">Действия на сайте</a>
-  <a href="{{ url_for('logs.errors') }}" class="{% if tab == 'errors' %}active{% endif %}">Ошибки</a>
-  <a href="{{ url_for('logs.server') }}" class="{% if tab == 'server' %}active{% endif %}">Журнал сервера</a>
-</nav>

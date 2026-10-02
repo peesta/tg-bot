@@ -1,5 +1,4 @@
-"""Методы storage/db.py, которые вызывает сайт."""
-import sqlite3
+"""Методы storage/db.py, которые вызывает бот."""
 import unittest
 
 from storage.db import Database
@@ -156,47 +155,36 @@ class ProductsTest(TempDatabaseTestCase):
 
 class UsersTest(TempDatabaseTestCase):
     def test_users(self):
-        self.assertFalse(self.db.has_login_users())
-        ivan = self.db.add_user("ivan", "Иван", "hash")
-        anna = self.db.add_user("anna", "Анна", "hash", "admin")
+        self.db.add_user(10, "Иван")
+        self.db.add_user(11, "Анна", "admin")
         with self.assertRaises(ValueError):
-            self.db.add_user("IVAN", "Ещё Иван", "hash")  # логин без учёта регистра
+            self.db.add_user(10, "Ещё Иван")
         with self.assertRaises(ValueError):
-            self.db.add_user("petr", "Пётр", "hash", "boss")
-        self.assertTrue(self.db.has_login_users())
+            self.db.add_user(12, "Пётр", "boss")
 
         self.assertEqual(
             [user["full_name"] for user in self.db.users_list()], ["Анна", "Иван"]
         )
-        self.assertEqual(self.db.get_user_by_username("Ivan")["id"], ivan)
-        self.db.set_user_active(ivan, False)
-        self.assertFalse(self.db.get_user(ivan)["is_active"])
-        self.assertEqual(self.db.active_users_ids(), [anna])
+        self.db.set_user_active(10, False)
+        self.assertFalse(self.db.get_user(10)["is_active"])
+        self.assertEqual(self.db.active_users_ids(), [11])
 
-        self.db.set_user_role(ivan, "admin")
-        self.assertEqual(self.db.get_user(ivan)["role"], "admin")
+        self.db.set_user_role(10, "admin")
+        self.assertEqual(self.db.get_user(10)["role"], "admin")
         with self.assertRaises(ValueError):
             self.db.set_user_role(99, "admin")
-        with self.assertRaises(ValueError):
-            self.db.set_user_username(ivan, "ANNA")
-
-        self.db.set_user_password(ivan, "new-hash")
-        self.db.touch_last_login(ivan)
-        user = self.db.get_user(ivan)
-        self.assertEqual(user["password_hash"], "new-hash")
-        self.assertIsNotNone(user["last_login"])
 
 
 class HistoryAndNotificationsTest(TempDatabaseTestCase):
     def test_write_off_history_newest_first(self):
         self.assertEqual(self.db.write_off_history(), (0, None))
-        ivan = self.db.add_user("ivan", "Иван", "hash")
+        self.db.add_user(10, "Иван")
         self.db.new_product("Медовик", 3)
         self.db.new_delivery("Медовик", 20)
         batch = self.db.move_to_fridge("Медовик", 20)
         for reason in ("Первая", "Вторая", "Третья"):
             self.db.clear_expired_product(
-                id=batch["id"], quantity=1, user_id=ivan, reason=reason
+                id=batch["id"], quantity=1, user_id=10, reason=reason
             )
         self.db.clear_expired_product(id=batch["id"], quantity=1, operation_type="sale")
 
@@ -206,173 +194,11 @@ class HistoryAndNotificationsTest(TempDatabaseTestCase):
         self.assertEqual(records[0]["full_name"], "Иван")
         self.assertEqual(self.db.write_off_history(page=3, limit=2), (None, None))
 
-    def test_operations_log_filters(self):
-        ivan = self.db.add_user("ivan", "Иван", "hash")
-        self.db.new_product("Ёжик", 3)
-        self.db.new_product("Медовик", 3)
-        self.db.new_delivery("Ёжик", 5, user_id=ivan)
-        self.db.new_delivery("Медовик", 5)
-        batch = self.db.move_to_fridge("Ёжик", 2, user_id=ivan)
-        self.db.clear_expired_product(
-            id=batch["id"], quantity=1, user_id=ivan, reason="Повреждено"
-        )
-
-        self.assertEqual(self.db.operations_log()[0], 4)
-        self.assertEqual(self.db.operations_log(user_id=ivan)[0], 3)
-        total, rows = self.db.operations_log(operation_type="write_off")
-        self.assertEqual((total, rows[0]["full_name"]), (1, "Иван"))
-        # Поиск без учёта регистра и «ё»: встроенный LIKE так не умеет.
-        self.assertEqual(self.db.operations_log(query="ЕЖИК")[0], 3)
-        self.assertEqual(self.db.operations_log(query="поврежд")[0], 1)
-        today = rows[0]["created_at"][:10]
-        self.assertEqual(self.db.operations_log(date_from=today, date_to=today)[0], 4)
-        self.assertEqual(self.db.operations_log(date_to="2000-01-01")[0], 0)
-        total, rows = self.db.operations_log(page=2, limit=3)
-        self.assertEqual((total, len(rows)), (4, 1))
-
     def test_mark_daily_notification(self):
         self.assertTrue(self.db.mark_daily_notification(10, "2026-10-01"))
         self.assertFalse(self.db.mark_daily_notification(10, "2026-10-01"))
         self.assertTrue(self.db.mark_daily_notification(11, "2026-10-01"))
         self.assertTrue(self.db.mark_daily_notification(10, "2026-10-02"))
-
-    def test_errors_and_audit(self):
-        self.db.log_error("ValueError", "Traceback…")
-        total, errors = self.db.errors_list()
-        self.assertEqual(total, 1)
-        self.assertIsNotNone(errors[0]["created_at"])
-
-        self.db.log_action("login", user_id=1, username="admin", ip="127.0.0.1")
-        self.db.log_action("db_update", "products #1: name: А → Б", 1, "admin")
-        self.assertEqual(self.db.audit_list()[0], 2)
-        self.assertEqual(self.db.audit_list(action="login")[0], 1)
-        self.assertEqual(self.db.audit_list(query="PRODUCTS")[1][0]["action"], "db_update")
-
-
-class ProductCatalogTest(TempDatabaseTestCase):
-    def test_new_product_with_all_fields_and_update(self):
-        self.db.new_product("Медовик", 3, 90, "Десерты")
-        self.db.new_delivery("Медовик", 4)
-        self.db.move_to_fridge("Медовик", 1)
-        product = self.db.get_product("Медовик")
-        self.assertEqual(
-            (product["freezer_storage_time"], product["category"]), (90, "Десерты")
-        )
-
-        self.db.update_product("Медовик", "Медовик классический", 2, None, None)
-        product = self.db.get_product("Медовик классический")
-        self.assertEqual(
-            (product["fridge_storage_time"], product["freezer_storage_time"],
-             product["category"]),
-            (2, None, None),
-        )
-        # Остатки переименованы вместе с товаром.
-        self.assertEqual(self.db.freezer_items()[0]["product_name"], "Медовик классический")
-        self.assertEqual(self.db.fridge_batches_list()[0]["product_name"], "Медовик классический")
-        self.assertEqual(self.db.catalog()[0]["freezer_quantity"], 3)
-
-        self.db.new_product("Чизкейк", 2)
-        with self.assertRaises(ValueError):
-            self.db.update_product("Чизкейк", "Медовик классический", 2, None, None)
-        with self.assertRaises(ValueError):
-            self.db.update_product("Нет такого", "Нет", 2, None, None)
-
-
-class TableEditorTest(TempDatabaseTestCase):
-    def test_tables_and_rows(self):
-        self.assertIn("products", self.db.table_names())
-        self.assertNotIn("sqlite_sequence", self.db.table_names())
-        with self.assertRaises(KeyError):
-            self.db.table_columns("products; DROP TABLE users")
-
-        rowid = self.db.insert_row(
-            "products", {"name": "Медовик", "fridge_storage_time": 3}
-        )
-        self.assertEqual(self.db.table_row("products", rowid)["name"], "Медовик")
-        self.db.update_row("products", rowid, {"category": "Десерты"})
-        total, rows = self.db.table_rows("products", query="десерт")
-        self.assertEqual((total, rows[0]["__rowid"]), (1, rowid))
-
-        with self.assertRaises(ValueError):  # CHECK (quantity > 0)
-            self.db.insert_row("freezer", {"product_name": "Медовик", "quantity": 0})
-        with self.assertRaises(ValueError):
-            self.db.update_row("products", rowid, {"no_such_column": 1})
-        with self.assertRaises(ValueError):
-            self.db.insert_row("audit_log", {"action": "login", "created_at": "x"})
-
-        self.db.delete_row("products", rowid)
-        self.assertIsNone(self.db.table_row("products", rowid))
-        with self.assertRaises(ValueError):
-            self.db.delete_row("products", rowid)
-
-    def test_sorting(self):
-        for name in ("Б", "А", "В"):
-            self.db.new_product(name, 1)
-        _, rows = self.db.table_rows("products", sort="name", descending=True)
-        self.assertEqual([row["name"] for row in rows], ["В", "Б", "А"])
-        _, rows = self.db.table_rows("products", sort="no_such_column")
-        self.assertEqual([row["name"] for row in rows], ["Б", "А", "В"])
-
-
-class MigrationTest(TempDatabaseTestCase):
-    """База, созданная Telegram-ботом, открывается сайтом без потерь."""
-
-    BOT_SCHEMA = """
-    CREATE TABLE users (
-        telegram_id INTEGER PRIMARY KEY,
-        full_name TEXT NOT NULL,
-        role TEXT NOT NULL CHECK (role IN ('admin', 'employee')),
-        is_active BOOLEAN NOT NULL DEFAULT FALSE
-    );
-    CREATE TABLE operations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        operation_type TEXT NOT NULL,
-        product_name TEXT NOT NULL,
-        batch_id INTEGER,
-        quantity INTEGER NOT NULL CHECK (quantity > 0),
-        reason TEXT,
-        created_at TEXT NOT NULL,
-        created_by INTEGER NOT NULL,
-        FOREIGN KEY (created_by) REFERENCES users(telegram_id)
-    );
-    CREATE TABLE errors (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        error_type TEXT NOT NULL,
-        error_message TEXT NOT NULL
-    );
-    CREATE TABLE daily_notifications (
-        telegram_id INTEGER PRIMARY KEY,
-        last_date TEXT NOT NULL
-    );
-    INSERT INTO users VALUES (123456789, 'Иван', 'employee', TRUE);
-    INSERT INTO operations (
-        operation_type, product_name, quantity, reason, created_at, created_by
-    ) VALUES ('write_off', 'Медовик', 1, 'Просрочено', '2026-10-01 10:00', 123456789);
-    INSERT INTO errors (error_type, error_message) VALUES ('ValueError', 'старая');
-    INSERT INTO daily_notifications VALUES (123456789, '2026-10-01');
-    """
-
-    def test_bot_database(self):
-        path = str(self.temp_path / "bot.db")
-        connection = sqlite3.connect(path)
-        connection.executescript(self.BOT_SCHEMA)
-        connection.close()
-
-        db = Database(path)
-
-        user = db.get_user(123456789)
-        self.assertEqual(
-            (user["username"], user["password_hash"], user["full_name"]),
-            ("tg123456789", None, "Иван"),
-        )
-        _, operations = db.operations_log()
-        self.assertEqual(operations[0]["full_name"], "Иван")
-        self.assertEqual(db.errors_list()[1][0]["error_message"], "старая")
-        self.assertFalse(db.mark_daily_notification(123456789, "2026-10-01"))
-        self.assertFalse(db.has_login_users())
-        self.assertIn("audit_log", db.table_names())
-        # Повторное открытие ничего не ломает.
-        Database(path).add_user("admin", "Админ", "hash", "admin")
 
 
 class StockTablesTest(TempDatabaseTestCase):
@@ -421,21 +247,6 @@ class StockTablesTest(TempDatabaseTestCase):
         self.db.backup(backup_path)
         self.db.replace_stock_tables(products=[], freezer=[], fridge=[])
         self.assertEqual(Database(backup_path).stock_tables(), before)
-
-    def test_restore(self):
-        before = self.db.stock_tables()
-        backup_path = str(self.temp_path / "backups" / "copy.db")
-        self.db.backup(backup_path)
-        self.db.replace_stock_tables(products=[], freezer=[], fridge=[])
-
-        self.db.restore(backup_path)
-        self.assertEqual(self.db.stock_tables(), before)
-
-        not_a_database = self.temp_path / "broken.db"
-        not_a_database.write_text("не база данных")
-        with self.assertRaises(ValueError):
-            self.db.restore(str(not_a_database))
-        self.assertEqual(self.db.stock_tables(), before)
 
 
 if __name__ == "__main__":
