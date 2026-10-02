@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{% endblock %} · Учёт сроков</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9D%84%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+</head>
+{%- set work_nav = [
+  ("main.dashboard", "🏠", "Главная", "main.dashboard"),
+  ("main.defrost", "📦", "Достать из заморозки", "main.defrost"),
+  ("main.delivery", "❄️", "Добавить заморозку", "main.delivery"),
+  ("main.expiring", "⚠️", "Сегодня заканчивается срок", "main.expiring"),
+  ("main.write_off", "🗑️", "Списание и продажа", "main.write_off"),
+  ("main.stock", "📊", "Остатки", "main.stock"),
+  ("main.history", "📋", "История списаний", "main.history"),
+] %}
+{%- set admin_nav = [
+  ("admin.products", "🏷️", "Товары", "admin.product"),
+  ("admin.users", "👥", "Сотрудники", "admin.user"),
+  ("database.tables", "🗄️", "База данных", "database."),
+  ("logs.operations", "📜", "Логи", "logs."),
+  ("admin.google", "📤", "Google Таблица", "admin.google"),
+  ("admin.backups", "💾", "Резервные копии", "admin.backup"),
+] %}
+{%- macro nav_link(item) -%}
+  {%- set endpoint, icon, label, match = item -%}
+  <a href="{{ url_for(endpoint) }}"
+     class="nav-link{% if (request.endpoint or '').startswith(match) %} active{% endif %}">
+    <span class="nav-icon" aria-hidden="true">{{ icon }}</span>
+    <span class="nav-label">{{ label }}</span>
+    {%- if endpoint == "main.expiring" and expiring_count %}
+      <span class="nav-badge" title="Партий с истекающим или истёкшим сроком">{{ expiring_count }}</span>
+    {%- endif %}
+  </a>
+{%- endmacro %}
+{%- macro logout_form(css="") -%}
+  <form method="post" action="{{ url_for('auth.logout') }}" class="inline {{ css }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit" class="link-button">Выйти</button>
+  </form>
+{%- endmacro %}
+<body class="{% if user %}role-{{ user.role }}{% else %}guest{% endif %}">
+{%- if not user %}
+  {% block guest %}{% endblock %}
+{%- elif is_admin %}
+  <input type="checkbox" id="nav-toggle" class="nav-toggle" hidden>
+  <div class="admin-shell">
+    <aside class="sidebar" aria-label="Меню">
+      <a class="sidebar-brand" href="{{ url_for('main.dashboard') }}">
+        <span class="brand-mark">❄</span>
+        <span>Учёт сроков<small>Панель администратора</small></span>
+      </a>
+      <nav class="sidebar-nav">
+        <div class="nav-section">Работа</div>
+        {% for item in work_nav %}{{ nav_link(item) }}{% endfor %}
+        <div class="nav-section">Администрирование</div>
+        {% for item in admin_nav %}{{ nav_link(item) }}{% endfor %}
+      </nav>
+      <div class="sidebar-user">
+        <div class="avatar" aria-hidden="true">{{ user.full_name[:1] }}</div>
+        <div class="sidebar-user-text">
+          <strong>{{ user.full_name }}</strong>
+          <span>{{ user.username }}</span>
+        </div>
+        <div class="sidebar-user-actions">
+          <a href="{{ url_for('auth.profile') }}">Профиль</a>
+          {{ logout_form() }}
+        </div>
+      </div>
+    </aside>
+    <label for="nav-toggle" class="sidebar-backdrop" aria-hidden="true"></label>
+    <div class="admin-main">
+      <header class="admin-topbar">
+        <label for="nav-toggle" class="burger" aria-label="Открыть меню">☰</label>
+        <span class="topbar-title">{{ self.title() }}</span>
+        <span class="role-badge role-badge-admin">👑 Администратор</span>
+      </header>
+      <main class="content">
+        {% include "_messages.html" %}
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+  </div>
+{%- else %}
+  <header class="emp-topbar">
+    <a class="emp-brand" href="{{ url_for('main.dashboard') }}">
+      <span class="brand-mark">❄</span> Учёт сроков
+    </a>
+    <span class="role-badge role-badge-employee">Сотрудник</span>
+    <div class="emp-user">
+      <a href="{{ url_for('auth.profile') }}" class="emp-user-name">{{ user.full_name }}</a>
+      {{ logout_form() }}
+    </div>
+  </header>
+  <nav class="emp-tabs" aria-label="Меню">
+    {% for item in work_nav %}{{ nav_link(item) }}{% endfor %}
+  </nav>
+  <main class="content content-narrow">
+    {% include "_messages.html" %}
+    {{ self.content() }}
+  </main>
+{%- endif %}
+</body>
+</html>

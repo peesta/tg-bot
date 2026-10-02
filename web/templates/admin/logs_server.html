@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% from "_macros.html" import empty %}
+{% block title %}Логи — сервер{% endblock %}
+{% block content %}
+{% include "admin/_logs_tabs.html" %}
+<div class="toolbar">
+  <span class="muted small">Файл <code>{{ log_file }}</code>, новые строки сверху.</span>
+  <span class="segmented">
+    {%- for count in line_options %}
+      <a href="{{ url_with(lines=count) }}" class="{% if count == lines_count %}active{% endif %}">{{ count }}</a>
+    {%- endfor %}
+  </span>
+</div>
+{%- if lines %}
+  <pre class="log log-server">{% for line in lines %}{{ line }}{% endfor %}</pre>
+{%- elif exists %}
+  {{ empty("📄", "Журнал пуст.") }}
+{%- else %}
+  {{ empty("📄", "Файла журнала пока нет.", "Он появится после запуска сайта через python main.py.") }}
+{%- endif %}
+{% endblock %}

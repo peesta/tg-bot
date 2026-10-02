@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, status_badge %}
+{% block title %}{{ batch.product_name }} — списание и продажа{% endblock %}
+{% block content %}
+<a class="back-link" href="{{ url_for('main.write_off') }}">← Ко всем партиям</a>
+<div class="batch-card status-{{ batch.expiration_date | status }}">
+  <div>
+    <span class="muted small">Выбрана партия № {{ batch.id }}</span>
+    <h1>{{ batch.product_name }} — {{ batch.quantity }} шт.</h1>
+    <span class="muted">Годен до {{ batch.expiration_date | date }} · разморожено {{ batch.date_added | date }}</span>
+  </div>
+  {{ status_badge(batch.expiration_date) }}
+</div>
+
+<div class="card-grid">
+  <section class="card">
+    <h2>🗑 Списать</h2>
+    <form method="post" class="stack">
+      {{ csrf() }}
+      <input type="hidden" name="operation" value="write_off">
+      <fieldset class="choices" data-reason-group>
+        <legend>Причина списания</legend>
+        {%- for code, title in reasons.items() %}
+          <label class="choice"><input type="radio" name="reason" value="{{ code }}" required {% if loop.first and batch.expiration_date | status != 'fresh' %}checked{% endif %}> {{ title }}</label>
+        {%- endfor %}
+        <label class="choice"><input type="radio" name="reason" value="other"> Другая причина</label>
+        <input type="text" name="reason_text" maxlength="200" placeholder="Напишите причину" class="reason-text" aria-label="Другая причина">
+      </fieldset>
+      <label class="field"><span>Количество (в партии {{ batch.quantity }} шт.)</span>
+        <input type="number" name="quantity" min="1" max="{{ batch.quantity }}" inputmode="numeric" placeholder="Сколько списать" required></label>
+      <div class="button-row">
+        <button type="submit" class="btn btn-danger">Списать</button>
+        <button type="submit" name="whole" value="1" formnovalidate class="btn btn-secondary">Вся партия ({{ batch.quantity }} шт.)</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>💰 Продано</h2>
+    <form method="post" class="stack">
+      {{ csrf() }}
+      <input type="hidden" name="operation" value="sale">
+      <label class="field"><span>Сколько продано (в партии {{ batch.quantity }} шт.)</span>
+        <input type="number" name="quantity" min="1" max="{{ batch.quantity }}" inputmode="numeric" placeholder="Количество" required></label>
+      <div class="button-row">
+        <button type="submit" class="btn btn-primary">Отметить продажу</button>
+        <button type="submit" name="whole" value="1" formnovalidate class="btn btn-secondary">Вся партия ({{ batch.quantity }} шт.)</button>
+      </div>
+    </form>
+  </section>
+</div>
+{% endblock %}

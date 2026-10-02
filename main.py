@@ -1,109 +1,110 @@
-import asyncio
+"""Запуск сайта учёта сроков годности.
+
+    python main.py                       — запустить сайт
+    python main.py --debug               — запустить с автоперезагрузкой
+    python main.py set-password ЛОГИН    — задать пароль (если забыли)
+"""
+import argparse
+import getpass
 import logging
 import os
+import sys
 
-from aiogram import Bot, Dispatcher
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
-from aiogram.types import BotCommand
-from aiogram.utils.token import TokenValidationError, validate_token
 from dotenv import load_dotenv
+from waitress import serve
 
-from telegram.handler import router
 from storage.db import Database
+from web import create_app, setup_logging
+from web.auth import MIN_PASSWORD_LENGTH, hash_password
 
 
-BOT_COMMANDS = [
-    BotCommand(command="start", description="Главное меню"),
-    BotCommand(command="cancel", description="Отменить текущее действие"),
-    BotCommand(command="id", description="Мой Telegram ID"),
-]
+DATABASE_PATH = "data/database.db"
+LOG_FILE = "data/logs/app.log"
+TRUE_VALUES = ("1", "true", "yes", "on", "да")
 
 
-def get_bot_token() -> str:
-    """Загружает токен Telegram-бота (TELEGRAM_KEY) из переменных окружения."""
+def get_settings() -> dict:
+    """Читает настройки сайта из .env и переменных окружения."""
     load_dotenv()
-    token = os.getenv("TELEGRAM_KEY", "").strip()
+    port_text = os.getenv("PORT", "8000").strip() or "8000"
+    if not port_text.isdigit() or not 0 < int(port_text) < 65536:
+        raise RuntimeError(f"PORT: «{port_text}» — нужен номер порта от 1 до 65535")
 
-    if not token:
-        raise RuntimeError(
-            "Переменная окружения TELEGRAM_KEY не задана: добавьте в .env "
-            "токен бота от @BotFather"
-        )
-
-    try:
-        validate_token(token)
-    except TokenValidationError:
-        raise RuntimeError(
-            "TELEGRAM_KEY не похож на токен бота: он должен выглядеть как "
-            "123456789:AAH..., без пробелов и кавычек"
-        ) from None
-
-    return token
+    return {
+        "host": os.getenv("HOST", "127.0.0.1").strip() or "127.0.0.1",
+        "port": int(port_text),
+        "secret_key": os.getenv("SECRET_KEY", "").strip() or None,
+        "google_table": os.getenv("GOOGLE_TABLE", "").strip() or None,
+        "secure_cookies": (
+            os.getenv("SECURE_COOKIES", "").strip().lower() in TRUE_VALUES
+        ),
+    }
 
 
-def get_admin_ids() -> frozenset[int]:
-    """Загружает ADMIN_IDS — Telegram ID администраторов через запятую.
+def set_password(username: str, db_path: str = DATABASE_PATH) -> None:
+    """Задаёт пароль и включает доступ; если логина нет — создаёт
+    администратора. Нужен, если единственный администратор забыл пароль."""
+    db = Database(db_path)
+    password = getpass.getpass(f"Новый пароль для {username}: ")
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise SystemExit(f"Пароль должен быть не короче {MIN_PASSWORD_LENGTH} символов")
+    if getpass.getpass("Повторите пароль: ") != password:
+        raise SystemExit("Пароли не совпадают")
 
-    Они всегда имеют доступ к боту, даже если их нет в таблице users.
-    Так появляется первый администратор, который добавит остальных.
-    """
-    load_dotenv()
-    admin_ids = set()
-
-    for part in os.getenv("ADMIN_IDS", "").split(","):
-        part = part.strip()
-        if not part:
-            continue
-        if not part.isdigit():
-            raise RuntimeError(
-                f"ADMIN_IDS: «{part}» не похоже на Telegram ID"
-            )
-        admin_ids.add(int(part))
-
-    return frozenset(admin_ids)
-
-
-def get_google_table() -> str | None:
-    """Загружает GOOGLE_TABLE — ссылку на Google Таблицу или её ID."""
-    load_dotenv()
-    return os.getenv("GOOGLE_TABLE", "").strip() or None
+    user = db.get_user_by_username(username)
+    if user is None:
+        db.add_user(username, username, hash_password(password), "admin")
+        print(f"Создан администратор {username}")
+    else:
+        db.set_user_password(user["id"], hash_password(password))
+        db.set_user_active(user["id"], True)
+        print(f"Пароль для {user['username']} изменён, доступ включён")
+    db.log_action("user_updated", f"{username}: пароль задан из командной строки")
 
 
-async def main() -> None:
-    """Создаёт бота и запускает обработку входящих сообщений."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Сайт учёта сроков годности")
+    parser.add_argument(
+        "--debug", action="store_true",
+        help="режим разработки: автоперезагрузка и подробные ошибки",
     )
-
-    bot = Bot(
-        token=get_bot_token(),
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    commands = parser.add_subparsers(dest="command")
+    password_parser = commands.add_parser(
+        "set-password", help="задать пароль пользователю"
     )
-    db = Database("data/database.db")
-    admin_ids = get_admin_ids()
-    if not admin_ids:
-        logging.warning(
-            "ADMIN_IDS не задан: в бота попадут только пользователи из "
-            "таблицы users"
-        )
+    password_parser.add_argument("username", help="логин")
+    args = parser.parse_args(argv)
 
-    google_table = get_google_table()
-    if google_table is None:
+    if args.command == "set-password":
+        set_password(args.username)
+        return
+
+    settings = get_settings()
+    setup_logging(LOG_FILE)
+    app = create_app({
+        "DATABASE": DATABASE_PATH,
+        "LOG_FILE": LOG_FILE,
+        "SECRET_KEY": settings["secret_key"],
+        "GOOGLE_TABLE": settings["google_table"],
+        "SESSION_COOKIE_SECURE": settings["secure_cookies"],
+    })
+    if settings["google_table"] is None:
         logging.warning(
             "GOOGLE_TABLE не задан: экспорт и импорт Google Таблицы "
             "работать не будут"
         )
 
-    dispatcher = Dispatcher(
-        db=db, admin_ids=admin_ids, google_table=google_table
+    logging.info(
+        "Сайт запущен: http://%s:%s", settings["host"], settings["port"]
     )
-    dispatcher.include_router(router)
-
-    await bot.set_my_commands(BOT_COMMANDS)
-    await dispatcher.start_polling(bot)
+    if args.debug:
+        app.run(host=settings["host"], port=settings["port"], debug=True)
+    else:
+        serve(app, host=settings["host"], port=settings["port"], threads=8)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        main()
+    except RuntimeError as error:
+        sys.exit(f"Ошибка настройки: {error}")

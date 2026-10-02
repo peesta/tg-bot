@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, empty %}
+{% block title %}Сегодня заканчивается срок{% endblock %}
+{% macro batches_table(batches) %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Товар</th><th class="num">Шт.</th><th>Годен до</th><th>Партия</th><th></th></tr></thead>
+      <tbody>
+      {%- for batch in batches %}
+        <tr>
+          <td>{{ batch.product_name }}</td>
+          <td class="num">{{ batch.quantity }}</td>
+          <td class="nowrap">{{ batch.expiration_date | date }}</td>
+          <td class="muted">№ {{ batch.id }}</td>
+          <td class="actions"><a class="btn btn-sm btn-secondary" href="{{ url_for('main.write_off_batch', batch_id=batch.id) }}">Списать / продать</a></td>
+        </tr>
+      {%- endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endmacro %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>⚠️ Сегодня заканчивается срок</h1>
+    <p class="muted">Партии, у которых срок истекает сегодня, и уже просроченные.</p>
+  </div>
+  {%- if expired or expiring_today %}
+  {%- set batches = expired + expiring_today %}
+  <form method="post" action="{{ url_for('main.expiring_clear') }}" class="page-actions"
+        data-confirm="Списать все просроченные партии и партии, у которых срок заканчивается сегодня? Партий: {{ batches | length }}, всего {{ batches | sum(attribute='quantity') }} шт. Причина: Просрочено.">
+    {{ csrf() }}
+    <button type="submit" class="btn btn-danger">🗑 Списать всё ({{ batches | length }} парт.)</button>
+  </form>
+  {%- endif %}
+</div>
+
+{%- if not expired and not expiring_today %}
+  {{ empty("✅", "Сегодня ни у одной партии не заканчивается срок, просроченных партий нет.") }}
+{%- endif %}
+
+{%- if expiring_today %}
+<section class="card card-warning">
+  <h2>⚠ Сегодня заканчивается срок годности</h2>
+  <ul class="summary">{% for name, quantity in today_totals %}<li><span>{{ name }}</span><b>{{ quantity }} шт</b></li>{% endfor %}</ul>
+  <details>
+    <summary>Партии ({{ expiring_today | length }})</summary>
+    {{ batches_table(expiring_today) }}
+  </details>
+</section>
+{%- endif %}
+
+{%- if expired %}
+<section class="card card-danger">
+  <h2>❌ Срок годности уже истёк</h2>
+  <ul class="summary">{% for name, quantity in expired_totals %}<li><span>{{ name }}</span><b>{{ quantity }} шт</b></li>{% endfor %}</ul>
+  <details open>
+    <summary>Партии ({{ expired | length }})</summary>
+    {{ batches_table(expired) }}
+  </details>
+</section>
+{%- endif %}
+{% endblock %}

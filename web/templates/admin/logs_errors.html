@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% from "_macros.html" import pagination, empty %}
+{% block title %}Логи — ошибки{% endblock %}
+{% block content %}
+{% include "admin/_logs_tabs.html" %}
+{%- if page.items %}
+<p class="muted small">Ошибок всего: {{ page.total }}. Нажмите на ошибку, чтобы увидеть подробности.</p>
+<div class="stack">
+  {%- for error in page.items %}
+    <details class="card error-item">
+      <summary>
+        <span class="nowrap muted">{{ error.created_at | datetime or "дата неизвестна" }}</span>
+        <strong>{{ error.error_type }}</strong>
+        <span class="muted clamp">{{ error.error_message.splitlines() | first }}</span>
+      </summary>
+      <pre class="log">{{ error.error_message }}</pre>
+    </details>
+  {%- endfor %}
+</div>
+{{ pagination(page) }}
+{%- else %}
+  {{ empty("✅", "Ошибок не было.") }}
+{%- endif %}
+{% endblock %}

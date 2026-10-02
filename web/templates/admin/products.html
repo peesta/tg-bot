@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, search, pagination, empty %}
+{% block title %}Товары{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div><h1>🏷️ Товары</h1><p class="muted">Справочник: что можно заморозить и сколько оно хранится после разморозки.</p></div>
+</div>
+
+<details class="card collapsible" {% if error or not page.total %}open{% endif %}>
+  <summary><h2>➕ Добавить товар</h2></summary>
+  {%- if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+  <form method="post" class="form-grid">
+    {{ csrf() }}
+    <label class="field field-wide"><span>Название</span>
+      <input name="name" value="{{ form.name }}" maxlength="60" required></label>
+    <label class="field"><span>Срок после разморозки, дн.</span>
+      <input type="number" name="fridge_storage_time" value="{{ form.fridge_storage_time }}" min="1" max="365" required></label>
+    <label class="field"><span>Срок в морозильнике, дн. <em>необязательно</em></span>
+      <input type="number" name="freezer_storage_time" value="{{ form.freezer_storage_time }}" min="1" max="3650"></label>
+    <label class="field"><span>Категория <em>необязательно</em></span>
+      <input name="category" value="{{ form.category }}" maxlength="60" list="categories"></label>
+    <div class="form-actions"><button type="submit" class="btn btn-primary">Добавить</button></div>
+  </form>
+</details>
+
+{{ search(query, "Поиск по названию или категории") }}
+{%- if page.items %}
+<section class="card">
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Название</th><th>Категория</th><th class="num">После разморозки</th><th class="num">В морозильнике хранится</th><th class="num">Остаток в морозильнике</th><th></th></tr></thead>
+      <tbody>
+      {%- for product in page.items %}
+        <tr>
+          <td><a href="{{ url_for('admin.product_edit', product_id=product.id) }}"><strong>{{ product.name }}</strong></a></td>
+          <td>{{ product.category or "—" }}</td>
+          <td class="num">{{ product.fridge_storage_time }} дн.</td>
+          <td class="num">{{ product.freezer_storage_time ~ " дн." if product.freezer_storage_time else "—" }}</td>
+          <td class="num">{{ product.freezer_quantity }} шт.</td>
+          <td class="actions"><a class="btn btn-sm btn-secondary" href="{{ url_for('admin.product_edit', product_id=product.id) }}">Изменить</a></td>
+        </tr>
+      {%- endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{{ pagination(page) }}
+{%- elif query %}
+  {{ empty("🔍", "По запросу «" ~ query ~ "» товаров не найдено.") }}
+{%- else %}
+  {{ empty("🏷️", "Справочник товаров пуст.", "Добавьте первый товар формой выше.") }}
+{%- endif %}
+<datalist id="categories">
+  {%- for category in page.items | map(attribute='category') | select | unique %}<option value="{{ category }}">{% endfor %}
+</datalist>
+{% endblock %}

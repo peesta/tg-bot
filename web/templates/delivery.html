@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, keep_list_state, search, pagination, empty, quantity_picker %}
+{% block title %}Добавить заморозку{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>❄️ Добавить заморозку</h1>
+    <p class="muted">Поставка в морозильник: выберите товар из справочника и количество.</p>
+  </div>
+</div>
+{{ search(query) }}
+{%- if page.items %}
+<ul class="list">
+  {%- for product in page.items %}
+  <li class="list-item">
+    <div class="item-main">
+      <strong class="item-title">{{ product.name }}</strong>
+      <span class="muted">
+        Сейчас в морозильнике: <b>{{ product.freezer_quantity }} шт.</b>
+        · хранится {{ product.fridge_storage_time }} дн. после разморозки
+      </span>
+      {%- if product.category %}<span class="badge">{{ product.category }}</span>{% endif %}
+    </div>
+    <form method="post" class="item-actions">
+      {{ csrf() }}{{ keep_list_state(query, page) }}
+      <input type="hidden" name="product_id" value="{{ product.id }}">
+      {{ quantity_picker(None, "Добавить") }}
+    </form>
+  </li>
+  {%- endfor %}
+</ul>
+{{ pagination(page) }}
+{%- elif query %}
+  {{ empty("🔍", "По запросу «" ~ query ~ "» товаров не найдено.") }}
+{%- else %}
+  {{ empty("🏷️", "Справочник товаров пуст.", "Товары добавляет администратор в разделе «Товары».") }}
+{%- endif %}
+{% endblock %}

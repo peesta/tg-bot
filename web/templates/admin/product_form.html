@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf %}
+{% block title %}{{ product.name }}{% endblock %}
+{% block content %}
+<a class="back-link" href="{{ url_for('admin.products') }}">← К товарам</a>
+<div class="page-header">
+  <div><h1>🏷️ {{ product.name }}</h1>
+  <p class="muted">В морозильнике: {{ in_freezer.quantity if in_freezer else 0 }} шт.</p></div>
+</div>
+<div class="card-grid">
+  <section class="card">
+    <h2>Изменить</h2>
+    {%- if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+    <form method="post" class="stack">
+      {{ csrf() }}
+      <label class="field"><span>Название</span>
+        <input name="name" value="{{ form.name }}" maxlength="60" required></label>
+      <label class="field"><span>Срок хранения после разморозки, дн.</span>
+        <input type="number" name="fridge_storage_time" value="{{ form.fridge_storage_time }}" min="1" max="365" required></label>
+      <label class="field"><span>Срок хранения в морозильнике, дн. <em>необязательно</em></span>
+        <input type="number" name="freezer_storage_time" value="{{ form.freezer_storage_time }}" min="1" max="3650"></label>
+      <label class="field"><span>Категория <em>необязательно</em></span>
+        <input name="category" value="{{ form.category }}" maxlength="60"></label>
+      <p class="muted small">Новое название сразу появится у остатков в морозильнике и холодильнике. Новый срок применяется только к новым разморозкам.</p>
+      <button type="submit" class="btn btn-primary">Сохранить</button>
+    </form>
+  </section>
+  <section class="card card-danger-zone">
+    <h2>Удаление</h2>
+    {%- if in_freezer %}
+      <p>Товар нельзя удалить, пока он есть в морозильнике ({{ in_freezer.quantity }} шт.): без справочника его не получится разморозить.</p>
+    {%- else %}
+      <p>Товар пропадёт из справочника. История операций сохранится.</p>
+      <form method="post" action="{{ url_for('admin.product_delete', product_id=product.id) }}" data-confirm="Удалить товар «{{ product.name }}» из справочника?">
+        {{ csrf() }}
+        <button type="submit" class="btn btn-danger">Удалить товар</button>
+      </form>
+    {%- endif %}
+  </section>
+</div>
+{% endblock %}

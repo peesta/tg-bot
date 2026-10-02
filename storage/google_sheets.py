@@ -111,7 +111,7 @@ def open_spreadsheet(
     if not table:
         raise GoogleSheetsError(
             "Не задана таблица: добавьте в .env строку GOOGLE_TABLE со ссылкой "
-            "на Google Таблицу и перезапустите бота."
+            "на Google Таблицу и перезапустите сайт."
         )
     if not Path(credentials_file).is_file():
         raise GoogleSheetsError(
