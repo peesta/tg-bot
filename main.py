@@ -6,6 +6,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.types import BotCommand
+from aiogram.utils.token import TokenValidationError, validate_token
 from dotenv import load_dotenv
 
 from telegram.handler import router
@@ -20,14 +21,23 @@ BOT_COMMANDS = [
 
 
 def get_bot_token() -> str:
-    """Загружает токен Telegram-бота из переменных окружения."""
+    """Загружает токен Telegram-бота (TELEGRAM_KEY) из переменных окружения."""
     load_dotenv()
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    token = os.getenv("TELEGRAM_KEY", "").strip()
 
     if not token:
         raise RuntimeError(
-            "Переменная окружения TELEGRAM_BOT_TOKEN не задана"
+            "Переменная окружения TELEGRAM_KEY не задана: добавьте в .env "
+            "токен бота от @BotFather"
         )
+
+    try:
+        validate_token(token)
+    except TokenValidationError:
+        raise RuntimeError(
+            "TELEGRAM_KEY не похож на токен бота: он должен выглядеть как "
+            "123456789:AAH..., без пробелов и кавычек"
+        ) from None
 
     return token
 
