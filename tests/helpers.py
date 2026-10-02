@@ -1,7 +1,6 @@
 """Общие заготовки для тестов.
 
-BotTestCase — бот с временной базой. Запросы к Telegram никуда не уходят,
-а записываются, и тест проверяет, что бот ответил.
+ApiTestCase — сайт с временной базой и тестовым клиентом FastAPI.
 
 FakeSheetsServer — Google Sheets API в памяти. Через fake_spreadsheet()
 с ним работает настоящий gspread, так что проверяются и вызовы библиотеки.
@@ -11,172 +10,39 @@ import logging
 import re
 import tempfile
 import unittest
-from datetime import datetime
+import warnings
 from json import dumps as json_dumps
 from pathlib import Path
 from urllib.parse import unquote
 
 import gspread
 import requests
-from aiogram import Bot, Dispatcher
-from aiogram.client.default import DefaultBotProperties
-from aiogram.client.session.base import BaseSession
-from aiogram.enums import ParseMode
-from aiogram.exceptions import TelegramForbiddenError
-from aiogram.methods import (
-    AnswerCallbackQuery, EditMessageText, SendMessage, TelegramMethod,
-)
-from aiogram.types import Chat, Message
 from gspread.http_client import HTTPClient
 
 from storage.db import Database
-from telegram.handler import router
-from telegram.utils import today
+
+with warnings.catch_warnings():
+    # Starlette советует httpx2, тестовому клиенту хватает httpx.
+    warnings.simplefilter("ignore")
+    from fastapi.testclient import TestClient
+
+from api import create_app
+from api.auth import limiter
 
 
-ADMIN_ID = 1  # владелец из ADMIN_IDS, его нет в таблице users
-ERROR_TEXT = "Что-то пошло не так"
+TABLE_URL = "https://docs.google.com/spreadsheets/d/KEY/edit"
+# Без этого заголовка сервер не принимает изменения (защита от чужих сайтов).
+HEADERS = {"X-Requested-With": "XMLHttpRequest"}
 
 
-# ---------- Бот без Telegram ----------
-
-class FakeSession(BaseSession):
-    """Сессия aiogram, которая записывает запросы вместо отправки."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.requests: list[TelegramMethod] = []
-        self.blocked_users: set[int] = set()
-        self._message_ids = itertools.count(1000)
-
-    async def make_request(self, bot, method, timeout=None):
-        self.requests.append(method)
-        if isinstance(method, SendMessage):
-            if method.chat_id in self.blocked_users:
-                raise TelegramForbiddenError(
-                    method=method, message="Forbidden: bot was blocked by the user"
-                )
-            return Message(
-                message_id=next(self._message_ids),
-                date=datetime.now(),
-                chat=Chat(id=method.chat_id, type="private"),
-                text=method.text,
-            )
-        return True
-
-    async def close(self) -> None:
-        pass
-
-    async def stream_content(self, *args, **kwargs):
-        if False:
-            yield b""
-
-
-class BotSimulator:
-    """Отправляет боту сообщения и нажатия кнопок от имени пользователей."""
-
-    def __init__(self, db: Database, **workflow_data) -> None:
-        self.session = FakeSession()
-        self.bot = Bot(
-            "123456:TEST",
-            session=self.session,
-            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+def set_expiration(db: Database, batch_id: int, days_from_today: int) -> None:
+    """Сдвигает срок годности партии относительно сегодняшнего дня."""
+    with db.cursor() as cursor:
+        cursor.execute(
+            "UPDATE fridge SET expiration_date = date('now', 'localtime', ?) "
+            "WHERE id = ?",
+            (f"{days_from_today} day", batch_id),
         )
-        # Роутер из telegram.handler один на модуль, а диспетчер в каждом
-        # тесте новый: отвязываем роутер от диспетчера прошлого теста.
-        router._parent_router = None
-        self.dispatcher = Dispatcher(db=db, **workflow_data)
-        self.dispatcher.include_router(router)
-        self._update_ids = itertools.count(1)
-
-    @staticmethod
-    def user(user_id: int) -> dict:
-        return {"id": user_id, "is_bot": False, "first_name": f"User{user_id}"}
-
-    async def feed(self, update: dict) -> list[TelegramMethod]:
-        """Обрабатывает update и возвращает запросы, которые сделал бот."""
-        start = len(self.session.requests)
-        update = {"update_id": next(self._update_ids), **update}
-        await self.dispatcher.feed_raw_update(self.bot, update)
-        return self.session.requests[start:]
-
-    async def send(self, user_id: int, text: str) -> list[TelegramMethod]:
-        message = {
-            "message_id": 1,
-            "date": int(datetime.now().timestamp()),
-            "chat": {"id": user_id, "type": "private"},
-            "from": self.user(user_id),
-            "text": text,
-        }
-        if text.startswith("/"):
-            command_length = len(text.split()[0])
-            message["entities"] = [
-                {"type": "bot_command", "offset": 0, "length": command_length}
-            ]
-        return await self.feed({"message": message})
-
-    async def click(self, user_id: int, data: str) -> list[TelegramMethod]:
-        return await self.feed({"callback_query": {
-            "id": "1",
-            "from": self.user(user_id),
-            "chat_instance": "test",
-            "data": data,
-            "message": {
-                "message_id": 500,
-                "date": int(datetime.now().timestamp()),
-                "chat": {"id": user_id, "type": "private"},
-                "from": {"id": 123456, "is_bot": True, "first_name": "Bot"},
-                "text": "старое сообщение",
-            },
-        }})
-
-
-def texts(requests: list[TelegramMethod]) -> list[str]:
-    """Тексты отправленных и изменённых сообщений."""
-    return [
-        request.text for request in requests
-        if isinstance(request, (SendMessage, EditMessageText))
-    ]
-
-
-def last_text(requests: list[TelegramMethod]) -> str:
-    all_texts = texts(requests)
-    return all_texts[-1] if all_texts else ""
-
-
-def alerts(requests: list[TelegramMethod]) -> list[str]:
-    """Всплывающие уведомления после нажатия кнопки."""
-    return [
-        request.text for request in requests
-        if isinstance(request, AnswerCallbackQuery) and request.text
-    ]
-
-
-def last_markup(requests: list[TelegramMethod]):
-    for request in reversed(requests):
-        if isinstance(request, (SendMessage, EditMessageText)):
-            return request.reply_markup
-    return None
-
-
-def callbacks(requests: list[TelegramMethod]) -> list[str]:
-    """callback_data кнопок последнего сообщения."""
-    markup = last_markup(requests)
-    if markup is None:
-        return []
-    return [
-        button.callback_data
-        for row in markup.inline_keyboard for button in row
-        if button.callback_data
-    ]
-
-
-def sent_to(requests: list[TelegramMethod], user_id: int) -> list[str]:
-    """Тексты новых сообщений, отправленных пользователю."""
-    return [
-        request.text for request in requests
-        if isinstance(request, SendMessage) and request.chat_id == user_id
-    ]
 
 
 class TempDatabaseTestCase(unittest.TestCase):
@@ -189,49 +55,58 @@ class TempDatabaseTestCase(unittest.TestCase):
         self.db = Database(str(self.temp_path / "test.db"))
 
 
-class BotTestCase(unittest.IsolatedAsyncioTestCase):
-    """Бот с временной базой и владельцем ADMIN_ID."""
+class ApiTestCase(unittest.TestCase):
+    """Сайт с временной базой. Учётные записи admin/admin (№ 1) и
+    employee/employee (№ 2) создаются автоматически, как при первом запуске."""
+
+    ADMIN_ID = 1
+    EMPLOYEE_ID = 2
 
     def setUp(self) -> None:
         # Ошибки, которые тесты вызывают нарочно, не засоряют вывод.
         logging.disable(logging.CRITICAL)
         self.addCleanup(logging.disable, logging.NOTSET)
+        limiter.failures.clear()
+        self.addCleanup(limiter.failures.clear)
 
         temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(temp_dir.cleanup)
         self.temp_path = Path(temp_dir.name)
-        self.db = Database(str(self.temp_path / "test.db"))
-        self.telegram = BotSimulator(
-            self.db, admin_ids=frozenset({ADMIN_ID}), **self.workflow_data()
+        self.app = create_app({
+            "database": str(self.temp_path / "test.db"),
+            "secret_key": "test",
+            "log_file": str(self.temp_path / "app.log"),
+            "credentials_file": str(self.temp_path / "credentials.json"),
+            "google_table": TABLE_URL,
+            "frontend_dist": str(self.temp_path / "dist"),
+        })
+        self.db: Database = self.app.state.db
+        self.accounts = self.app.state.accounts
+        self.client = self.client_for()
+
+    def client_for(self) -> TestClient:
+        """Отдельный браузер со своей сессией."""
+        client = TestClient(self.app, raise_server_exceptions=False, headers=HEADERS)
+        self.addCleanup(client.close)
+        return client
+
+    def login(self, username: str, password: str | None = None, client: TestClient | None = None):
+        response = (client or self.client).post(
+            "/api/auth/login", json={"username": username, "password": password or username}
         )
+        self.assertEqual(response.status_code, 200, response.text)
+        return response
 
-    def workflow_data(self) -> dict:
-        """Дополнительные данные для обработчиков (например, google_table)."""
-        return {}
-
-    async def send(self, user_id: int, text: str) -> list[TelegramMethod]:
-        return await self.telegram.send(user_id, text)
-
-    async def click(self, user_id: int, data: str) -> list[TelegramMethod]:
-        return await self.telegram.click(user_id, data)
-
-    def assertNoBotError(self, requests: list[TelegramMethod]) -> None:
-        for text in texts(requests):
-            self.assertNotIn(ERROR_TEXT, text)
-
-    def skip_daily_notification(self, *user_ids: int) -> None:
-        """Отмечает, что сегодня уведомление уже было: оно не помешает проверкам."""
-        for user_id in user_ids:
-            self.db.mark_daily_notification(user_id, today())
-
-    def set_expiration(self, batch_id: int, days_from_today: int) -> None:
-        """Сдвигает срок годности партии относительно сегодняшнего дня."""
+    def errors(self) -> list[dict]:
         with self.db.cursor() as cursor:
-            cursor.execute(
-                "UPDATE fridge SET expiration_date = date('now', 'localtime', ?) "
-                "WHERE id = ?",
-                (f"{days_from_today} day", batch_id),
-            )
+            cursor.execute("SELECT * FROM errors ORDER BY id")
+            return [dict(row) for row in cursor.fetchall()]
+
+    def changes(self, action: str | None = None) -> list[dict]:
+        with self.db.cursor() as cursor:
+            cursor.execute("SELECT * FROM change_log ORDER BY id")
+            rows = [dict(row) for row in cursor.fetchall()]
+        return [row for row in rows if action is None or row["action"] == action]
 
 
 # ---------- Google Таблица без Google ----------

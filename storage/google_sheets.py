@@ -111,7 +111,7 @@ def open_spreadsheet(
     if not table:
         raise GoogleSheetsError(
             "Не задана таблица: добавьте в .env строку GOOGLE_TABLE со ссылкой "
-            "на Google Таблицу и перезапустите бота."
+            "на Google Таблицу и перезапустите сайт."
         )
     if not Path(credentials_file).is_file():
         raise GoogleSheetsError(
@@ -412,6 +412,7 @@ def import_from_google(
         db: Database,
         table: str | None,
         credentials_file: str = CREDENTIALS_FILE,
+        user_id: int | None = None,
     ) -> tuple[dict[str, int], str]:
     """Заменяет товары, морозильник и холодильник в базе данными из таблицы.
 
@@ -429,5 +430,5 @@ def import_from_google(
         / f"before_import_{datetime.now():%Y-%m-%d_%H-%M-%S}.db"
     )
     db.backup(backup_path)
-    db.replace_stock_tables(**tables)
+    db.replace_stock_tables(**tables, user_id=user_id)
     return {title: len(rows) for title, rows in tables.items()}, backup_path

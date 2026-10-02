@@ -14,8 +14,8 @@ import storage.google_sheets as google_sheets
 from storage.db import Database
 from storage.google_sheets import GoogleSheetsError, ImportDataError
 from tests.helpers import (
-    ADMIN_ID, BotTestCase, FakeSheetsServer, TempDatabaseTestCase, alerts,
-    callbacks, fake_spreadsheet, last_markup, last_text, texts,
+    TABLE_URL, ApiTestCase, FakeSheetsServer, TempDatabaseTestCase,
+    fake_spreadsheet,
 )
 
 
@@ -24,7 +24,6 @@ HEADERS = {
     "freezer": ["product_name", "quantity"],
     "fridge": ["id", "product_name", "quantity", "date_added", "expiration_date"],
 }
-TABLE_URL = "https://docs.google.com/spreadsheets/d/KEY/edit"
 REAL_OPEN_SPREADSHEET = google_sheets.open_spreadsheet
 
 
@@ -277,13 +276,11 @@ class OpenSpreadsheetTest(TempDatabaseTestCase):
         self.assertEqual(google_sheets.spreadsheet_url(TABLE_URL), TABLE_URL)
 
 
-class GoogleSheetsButtonsTest(BotTestCase):
-    def workflow_data(self):
-        return {"google_table": TABLE_URL}
+class GooglePageTest(ApiTestCase):
+    """Раздел «Google Таблица» в API администратора."""
 
     def setUp(self):
         super().setUp()
-        self.db.add_user(555, "Иван")
         self.db.new_product("Медовик", 3)
         self.db.new_delivery("Медовик", 5)
         self.server = FakeSheetsServer()
@@ -294,73 +291,74 @@ class GoogleSheetsButtonsTest(BotTestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    async def test_buttons_for_admin_only(self):
-        requests = await self.click(ADMIN_ID, "settings")
-        self.assertIn("gsheet_export", callbacks(requests))
-        self.assertIn("gsheet_import", callbacks(requests))
+    def test_admin_only(self):
+        self.login("employee")
+        self.assertEqual(self.client.post("/api/admin/google/export").status_code, 403)
+        self.assertEqual(self.server.values("freezer"), [])
 
-        for data in ("gsheet_export", "gsheet_export_yes", "gsheet_import_yes"):
-            requests = await self.click(555, data)
-            self.assertEqual(texts(requests), [])
-            self.assertIn("устарела", alerts(requests)[0])
+    def test_settings(self):
+        self.login("admin")
+        settings = self.client.get("/api/admin/google").json()
+        self.assertEqual(settings["table"], TABLE_URL)
+        self.assertFalse(settings["has_credentials"])
 
-    async def test_export(self):
-        self.assertIn("gsheet_export_yes", callbacks(await self.click(ADMIN_ID, "gsheet_export")))
-        requests = await self.click(ADMIN_ID, "gsheet_export_yes")
-
-        kinds = [type(request).__name__ for request in requests]
-        self.assertLess(kinds.index("AnswerCallbackQuery"), kinds.index("EditMessageText"))
-        self.assertIn("Выгружаю", texts(requests)[0])
-        self.assertIn("Экспорт завершён", last_text(requests))
-        links = [button.url for row in last_markup(requests).inline_keyboard for button in row]
-        self.assertIn(TABLE_URL, links)
+    def test_export(self):
+        self.login("admin")
+        response = self.client.post("/api/admin/google/export")
+        self.assertEqual(response.json()["counts"]["freezer"], 1)
         self.assertEqual(self.server.values("freezer")[1], ["Медовик", 5])
+        self.assertEqual(self.changes("google_export")[-1]["user_id"], self.ADMIN_ID)
 
-    async def test_import_with_errors(self):
+    def test_import_with_errors(self):
         self.server.set_values("products", [HEADERS["products"], ["Медовик", "3"]])
         self.server.set_values("freezer", [HEADERS["freezer"], ["Чизкейк", "ноль"]])
         self.server.set_values("fridge", [HEADERS["fridge"]])
+        self.login("admin")
 
-        requests = await self.click(ADMIN_ID, "gsheet_import_yes")
+        response = self.client.post("/api/admin/google/import")
 
-        self.assertIn("база не изменена", last_text(requests))
-        self.assertIn("Чизкейк", last_text(requests))
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("база не изменена", response.json()["detail"])
+        self.assertTrue(any("Чизкейк" in line for line in response.json()["errors"]))
         self.assertEqual(self.db.get_freezer_product("Медовик")["quantity"], 5)
+        self.assertEqual(self.errors()[-1]["error_type"], "ImportDataError")
 
-    async def test_import(self):
+    def test_import(self):
         self.server.set_values("products", [HEADERS["products"], ["Медовик", "3"]])
         self.server.set_values("freezer", [HEADERS["freezer"], ["Медовик", "9"]])
         self.server.set_values("fridge", [HEADERS["fridge"]])
+        self.login("admin")
 
-        requests = await self.click(ADMIN_ID, "gsheet_import_yes")
+        result = self.client.post("/api/admin/google/import").json()
 
-        self.assertIn("Импорт завершён", last_text(requests))
-        self.assertIn("before_import_", last_text(requests))
+        self.assertIn("before_import_", result["backup"])
         self.assertEqual(self.db.get_freezer_product("Медовик")["quantity"], 9)
+        change = self.changes("stock_replaced")[-1]
+        self.assertEqual(change["user_id"], self.ADMIN_ID)
 
-    async def test_no_parallel_runs(self):
-        from telegram.handlers.google_sheets import sync_lock
+    def test_no_parallel_runs(self):
+        from api.admin import sync_lock
 
-        await sync_lock.acquire()
-        try:
-            requests = await self.click(ADMIN_ID, "gsheet_import_yes")
-        finally:
-            sync_lock.release()
-        self.assertIn("Уже идёт", last_text(requests))
+        self.login("admin")
+        with sync_lock:
+            response = self.client.post("/api/admin/google/import")
+        self.assertIn("Уже идёт", response.json()["detail"])
 
-    async def test_google_error(self):
+    def test_google_error(self):
         spreadsheet = fake_spreadsheet(self.server)  # таблица открылась, сбой позже
         self.server.fail = (429, "Quota exceeded")
+        self.login("admin")
         with mock.patch.object(google_sheets, "open_spreadsheet", return_value=spreadsheet):
-            requests = await self.click(ADMIN_ID, "gsheet_export_yes")
-        self.assertIn("Экспорт не выполнен", last_text(requests))
-        self.assertIn("Quota exceeded", last_text(requests))
+            response = self.client.post("/api/admin/google/export")
+        self.assertIn("Экспорт не выполнен", response.json()["detail"])
+        self.assertIn("Quota exceeded", response.json()["detail"])
 
-    async def test_no_google_table(self):
-        self.telegram.dispatcher["google_table"] = None
+    def test_no_google_table(self):
+        self.app.state.settings["google_table"] = None
+        self.login("admin")
         with mock.patch.object(google_sheets, "open_spreadsheet", REAL_OPEN_SPREADSHEET):
-            requests = await self.click(ADMIN_ID, "gsheet_export_yes")
-        self.assertIn("GOOGLE_TABLE", last_text(requests))
+            response = self.client.post("/api/admin/google/export")
+        self.assertIn("GOOGLE_TABLE", response.json()["detail"])
 
 
 if __name__ == "__main__":

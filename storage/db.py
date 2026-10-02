@@ -50,7 +50,17 @@ CREATE TABLE IF NOT EXISTS operations (
 CREATE TABLE IF NOT EXISTS errors (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     error_type TEXT NOT NULL,
-    error_message TEXT NOT NULL
+    error_message TEXT NOT NULL,
+    created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS change_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    user_id INTEGER,
+    action TEXT NOT NULL,
+    table_name TEXT,
+    details TEXT
 );
 
 CREATE TABLE IF NOT EXISTS daily_notifications (
@@ -63,10 +73,14 @@ CREATE INDEX IF NOT EXISTS idx_operations_created_at
 
 CREATE INDEX IF NOT EXISTS idx_operations_created_by
     ON operations(created_by);
+
+CREATE INDEX IF NOT EXISTS idx_change_log_created_at
+    ON change_log(created_at);
 """
 
 SYSTEM_USER_ID = 0
 USER_ROLES = ("admin", "employee")
+ROLE_NAMES = {"admin": "администратор", "employee": "сотрудник"}
 
 
 class Database:
@@ -84,6 +98,12 @@ class Database:
         connection = self.get_conn()
         try:
             connection.executescript(DATABASE_SCHEMA)
+            error_columns = [
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(errors)")
+            ]
+            if "created_at" not in error_columns:
+                connection.execute("ALTER TABLE errors ADD COLUMN created_at TEXT")
             connection.commit()
         finally:
             connection.close()
@@ -151,6 +171,43 @@ class Database:
                 self._operation_user_id(user_id),
             ),
         )
+
+    def _log_change(
+        self,
+        cursor: sqlite3.Cursor,
+        action: str,
+        details: str,
+        user_id: int | None = None,
+        table_name: str | None = None,
+    ) -> None:
+        """Записывает изменение данных (сотрудники, товары, таблицы)
+        в журнал change_log. user_id — кто изменил, None — система."""
+        cursor.execute(
+            """
+            INSERT INTO change_log (
+                created_at, user_id, action, table_name, details
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                user_id,
+                action,
+                table_name,
+                details,
+            ),
+        )
+
+    def log_change(
+        self,
+        action: str,
+        details: str,
+        user_id: int | None = None,
+        table_name: str | None = None,
+    ) -> None:
+        """Записывает изменение в журнал change_log отдельной транзакцией."""
+        with self.cursor() as cursor:
+            self._log_change(cursor, action, details, user_id, table_name)
 
     def move_to_fridge(
         self, product_name: str, quantity: int, user_id: int | None = None
@@ -686,7 +743,8 @@ class Database:
     def new_product(
         self, 
         name: str, 
-        fridge_storage_time: int
+        fridge_storage_time: int,
+        user_id: int | None = None,
     ) -> None:
         """Добавляет в таблицу продуктов новые продукты"""
         self._validate_quantity(fridge_storage_time)
@@ -701,7 +759,12 @@ class Database:
                 )
             except sqlite3.IntegrityError:
                 raise ValueError(f"{name} уже есть в базе данных")
-            
+
+            self._log_change(
+                cursor, "product_added",
+                f"{name}: срок после разморозки {fridge_storage_time} дн.",
+                user_id, "products",
+            )
             return
 
     def edit_product(
@@ -709,7 +772,8 @@ class Database:
         name: str,
         fridge_storage_time: int,
         freezer_storage_time: int | None = None,
-        new_name: str | None = None
+        new_name: str | None = None,
+        user_id: int | None = None,
     ) -> None:
         """Меняет сроки хранения продукта и, если нужно, его название.
 
@@ -753,9 +817,15 @@ class Database:
             except sqlite3.IntegrityError:
                 raise ValueError(f"{new_name} уже есть в базе данных")
 
+            details = f"{name}: срок после разморозки {fridge_storage_time} дн."
+            if freezer_storage_time is not None:
+                details += f", в морозильнике {freezer_storage_time} дн."
+            if new_name is not None and new_name != name:
+                details += f", новое название «{new_name}»"
+            self._log_change(cursor, "product_edited", details, user_id, "products")
             return
 
-    def delete_product(self, name: str) -> None:
+    def delete_product(self, name: str, user_id: int | None = None) -> None:
         """Удаляет продукт из справочника.
 
         Продукт с остатком в морозильнике удалить нельзя: без справочника
@@ -775,6 +845,7 @@ class Database:
             cursor.execute("DELETE FROM products WHERE name = ?", (name,))
             if cursor.rowcount == 0:
                 raise ValueError(f"Нет продукта с именем {name}")
+            self._log_change(cursor, "product_deleted", name, user_id, "products")
 
     @staticmethod
     def _user_from_row(row: sqlite3.Row | None) -> dict | None:
@@ -824,7 +895,8 @@ class Database:
         self,
         telegram_id: int,
         full_name: str,
-        role: str = "employee"
+        role: str = "employee",
+        created_by: int | None = None,
     ) -> None:
         """Добавляет пользователя с доступом к боту."""
         self._validate_role(role)
@@ -842,8 +914,15 @@ class Database:
                 raise ValueError(
                     f"Пользователь {telegram_id} уже есть в базе данных"
                 )
+            self._log_change(
+                cursor, "user_added",
+                f"{full_name} (№ {telegram_id}), роль: {ROLE_NAMES[role]}",
+                created_by, "users",
+            )
 
-    def set_user_role(self, telegram_id: int, role: str) -> None:
+    def set_user_role(
+        self, telegram_id: int, role: str, changed_by: int | None = None
+    ) -> None:
         """Назначает пользователю роль admin или employee."""
         self._validate_role(role)
 
@@ -854,8 +933,14 @@ class Database:
             )
             if cursor.rowcount == 0:
                 raise ValueError(f"Нет пользователя {telegram_id}")
+            self._log_change(
+                cursor, "user_role",
+                f"№ {telegram_id}: роль {ROLE_NAMES[role]}", changed_by, "users",
+            )
 
-    def set_user_active(self, telegram_id: int, is_active: bool) -> None:
+    def set_user_active(
+        self, telegram_id: int, is_active: bool, changed_by: int | None = None
+    ) -> None:
         """Включает или отключает пользователю доступ к боту."""
         with self.cursor() as cursor:
             cursor.execute(
@@ -864,6 +949,11 @@ class Database:
             )
             if cursor.rowcount == 0:
                 raise ValueError(f"Нет пользователя {telegram_id}")
+            self._log_change(
+                cursor, "user_access",
+                f"№ {telegram_id}: доступ {'включён' if is_active else 'отключён'}",
+                changed_by, "users",
+            )
 
     def write_off_history(
         self,
@@ -962,6 +1052,7 @@ class Database:
         products: list[dict],
         freezer: list[dict],
         fridge: list[dict],
+        user_id: int | None = None,
     ) -> None:
         """Заменяет содержимое products, freezer и fridge одной транзакцией.
 
@@ -1036,6 +1127,13 @@ class Database:
                     ),
                 )
 
+            self._log_change(
+                cursor, "stock_replaced",
+                f"товаров: {len(products)}, в морозильнике: {len(freezer)}, "
+                f"партий: {len(fridge)}",
+                user_id,
+            )
+
     def backup(self, path: str) -> None:
         """Сохраняет копию базы данных в файл path."""
         Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -1052,8 +1150,12 @@ class Database:
         with self.cursor() as cursor:
             cursor.execute(
                 """
-                INSERT INTO errors (error_type, error_message)
-                VALUES (?, ?)
+                INSERT INTO errors (error_type, error_message, created_at)
+                VALUES (?, ?, ?)
                 """,
-                (error_type, error_message),
+                (
+                    error_type,
+                    error_message,
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                ),
             )

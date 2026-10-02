@@ -4,3 +4,5 @@ credentials.json
 .uv-cache/
 data/
 __pycache__/
+frontend/node_modules/
+frontend/dist/

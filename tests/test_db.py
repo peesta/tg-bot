@@ -1,4 +1,5 @@
-"""Методы storage/db.py, которые вызывает бот."""
+"""Методы storage/db.py и журналы, которые они ведут."""
+import sqlite3
 import unittest
 
 from storage.db import Database
@@ -247,6 +248,98 @@ class StockTablesTest(TempDatabaseTestCase):
         self.db.backup(backup_path)
         self.db.replace_stock_tables(products=[], freezer=[], fridge=[])
         self.assertEqual(Database(backup_path).stock_tables(), before)
+
+
+class LoggingTest(TempDatabaseTestCase):
+    """Что пишется в журналы: операции, изменения, ошибки."""
+
+    def changes(self):
+        with self.db.cursor() as cursor:
+            cursor.execute("SELECT * FROM change_log ORDER BY id")
+            return [dict(row) for row in cursor.fetchall()]
+
+    def test_delivery_and_defrost_are_operations(self):
+        self.db.new_product("Медовик", 3)
+        self.db.new_delivery("Медовик", 5, user_id=7)
+        self.db.move_to_fridge("Медовик", 2, user_id=7)
+        with self.db.cursor() as cursor:
+            cursor.execute("SELECT operation_type, quantity, created_by FROM operations")
+            rows = [tuple(row) for row in cursor.fetchall()]
+        self.assertEqual(rows, [("delivery", 5, 7), ("defrost", 2, 7)])
+
+    def test_new_employees_and_their_rights(self):
+        self.db.add_user(10, "Иван", created_by=1)
+        with self.assertRaises(ValueError):
+            self.db.add_user(10, "Ещё Иван", created_by=1)  # не записывается
+        self.db.set_user_role(10, "admin", changed_by=1)
+        self.db.set_user_active(10, False, changed_by=1)
+
+        changes = self.changes()
+        self.assertEqual(
+            [(row["action"], row["user_id"], row["table_name"]) for row in changes],
+            [("user_added", 1, "users"), ("user_role", 1, "users"), ("user_access", 1, "users")],
+        )
+        self.assertEqual(changes[0]["details"], "Иван (№ 10), роль: сотрудник")
+        self.assertIn("администратор", changes[1]["details"])
+        self.assertIn("отключён", changes[2]["details"])
+        self.assertTrue(all(row["created_at"] for row in changes))
+
+    def test_product_changes(self):
+        self.db.new_product("Медовик", 3, user_id=1)
+        self.db.edit_product("Медовик", 4, new_name="Медовик классический", user_id=1)
+        self.db.new_delivery("Медовик классический", 1)
+        with self.assertRaises(ValueError):
+            self.db.delete_product("Медовик классический", user_id=1)  # есть в морозильнике
+        self.db.move_to_fridge("Медовик классический", 1)
+        self.db.delete_product("Медовик классический", user_id=1)
+
+        changes = self.changes()
+        self.assertEqual(
+            [row["action"] for row in changes],
+            ["product_added", "product_edited", "product_deleted"],
+        )
+        self.assertIn("новое название «Медовик классический»", changes[1]["details"])
+        self.assertEqual(changes[2]["details"], "Медовик классический")
+
+    def test_import_replaces_tables(self):
+        self.db.replace_stock_tables(
+            products=[{"name": "Медовик", "fridge_storage_time": 3}],
+            freezer=[], fridge=[], user_id=1,
+        )
+        [change] = self.changes()
+        self.assertEqual(change["action"], "stock_replaced")
+        self.assertIn("товаров: 1", change["details"])
+
+    def test_public_log_change(self):
+        self.db.log_change("backup_created", "manual.db", user_id=1)
+        self.assertEqual(self.changes()[0]["details"], "manual.db")
+
+    def test_errors_have_date(self):
+        self.db.log_error("ValueError", "сломалось")
+        with self.db.cursor() as cursor:
+            cursor.execute("SELECT created_at FROM errors")
+            self.assertIsNotNone(cursor.fetchone()["created_at"])
+
+    def test_old_errors_table_gets_date_column(self):
+        path = str(self.temp_path / "old.db")
+        connection = sqlite3.connect(path)
+        connection.executescript("""
+            CREATE TABLE errors (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                error_type TEXT NOT NULL,
+                error_message TEXT NOT NULL
+            );
+            INSERT INTO errors (error_type, error_message) VALUES ('X', 'старая');
+        """)
+        connection.close()
+
+        db = Database(path)
+        db.log_error("Y", "новая")
+        with db.cursor() as cursor:
+            cursor.execute("SELECT error_message, created_at FROM errors ORDER BY id")
+            rows = [tuple(row) for row in cursor.fetchall()]
+        self.assertEqual(rows[0], ("старая", None))
+        self.assertIsNotNone(rows[1][1])
 
 
 if __name__ == "__main__":
