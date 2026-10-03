@@ -1,5 +1,5 @@
 @echo off
-cd /с "%~dp0"
+cd "%~dp0"
 call npm --prefix frontend install
 call py -m pip install -r requirements.txt
 call npm --prefix frontend run build
