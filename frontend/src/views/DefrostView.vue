@@ -35,7 +35,8 @@ async function defrost() {
     toast(
       `Добавлено: ${batch.product_name} — ${batch.quantity} шт\n`
       + `Дата разморозки: ${formatDateTime(batch.defrosted_at)}\n`
-      + `Годен до: ${formatDate(batch.expiration_date)}`,
+      + `Годен до: ${formatDate(batch.expiration_date)}`
+      + (batch.batch_quantity > batch.quantity ? `\nВ сегодняшней партии теперь: ${batch.batch_quantity} шт` : ''),
     )
     selected.value = null
     load()
@@ -71,6 +72,7 @@ onMounted(load)
       <p class="muted">
         В морозильнике {{ selected.quantity }} шт.
         <template v-if="selected.expires">После разморозки годен до {{ formatDate(selected.expires) }}.</template>
+        Если сегодня этот товар уже клали в холодильник, количество добавится к той же партии.
       </p>
       <div class="field">
         <span class="field-label">Сколько разморозить?</span>

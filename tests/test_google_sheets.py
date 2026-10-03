@@ -167,7 +167,10 @@ class ExportImportTest(TempDatabaseTestCase):
         self.assertEqual(self.db.get_freezer_product("Новый ролл")["quantity"], 1000)
         new_batch = [b for b in tables["fridge"] if b["product_name"] == "Новый ролл"][0]
         self.assertEqual(new_batch["expiration_date"], "2026-10-05")
-        self.assertEqual(self.db.move_to_fridge("Новый ролл", 1)["quantity"], 1)
+        # Новый товар можно размораживать. Партия может слиться с импортированной,
+        # если её срок совпал со сроком сегодняшней разморозки, — проверяем морозильник.
+        self.db.move_to_fridge("Новый ролл", 1)
+        self.assertEqual(self.db.get_freezer_product("Новый ролл")["quantity"], 999)
 
     def test_import_with_errors_changes_nothing(self):
         before = self.db.stock_tables()

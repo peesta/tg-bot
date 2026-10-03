@@ -37,6 +37,11 @@
   --success: #276b43;
   --success-soft: #e5f3ea;
   --info-soft: #eaf1f8;
+  /* Значки операций «Поставка» и «Продажа» — в логах, истории и на главной */
+  --delivery: #ab8300;
+  --delivery-soft: #fcfbc8;
+  --sale: #0b9243;
+  --sale-soft: #c9efd6;
 
   --grid-line: #d3d9dd;
   --grid-head: #eef1f3;
@@ -442,11 +447,12 @@ button, input, select, textarea {
   font-weight: var(--fw-m);
   white-space: nowrap;
 }
-.badge-fresh, .badge-sale { background: var(--success-soft); color: var(--success); }
+.badge-fresh { background: var(--success-soft); color: var(--success); }
+.badge-sale { background: var(--sale-soft); color: var(--sale); }
 .badge-today { background: var(--warning-soft); color: var(--warning); }
 .badge-expired, .badge-write_off, .badge-off { background: var(--danger-soft); color: var(--danger); }
 .badge-defrost, .badge-admin { background: var(--accent-soft); color: var(--accent); }
-.badge-delivery { background: var(--info-soft); color: #2b5a86; }
+.badge-delivery { background: var(--delivery-soft); color: var(--delivery); }
 
 /* ---------- Таблицы для чтения ---------- */
 

@@ -47,6 +47,7 @@ async function deliver() {
     })
     toast(result.destination === 'fridge'
       ? `В холодильник добавлено: ${result.product_name} — ${result.quantity} шт\nГоден до: ${formatDate(result.expiration_date)}`
+        + (result.batch_quantity > result.quantity ? `\nВ сегодняшней партии теперь: ${result.batch_quantity} шт` : '')
       : `В морозильник добавлено: ${result.product_name} — ${result.quantity} шт\nТеперь в морозильнике: ${result.in_freezer} шт`)
     selected.value = null
     load()
@@ -98,7 +99,8 @@ onMounted(load)
         </div>
         <span v-if="destination === 'freezer'" class="field-hint">Товар добавится к запасу в морозильнике</span>
         <span v-else-if="selected.expires" class="field-hint">
-          Будет новая партия в холодильнике, годен до {{ formatDate(selected.expires) }}
+          Годен до {{ formatDate(selected.expires) }}. Если сегодня этот товар уже клали в холодильник,
+          количество добавится к той же партии
         </span>
         <span v-else class="error-text">У товара не задан срок хранения в холодильнике — его задаёт администратор</span>
       </div>

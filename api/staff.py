@@ -173,7 +173,14 @@ def defrost(form: StockForm, user: dict = Depends(current_user), db: Database = 
         raise ValueError("Этого продукта уже нет в морозильнике")
     quantity = check_quantity(form.quantity, product["quantity"], "столько в морозильнике")
     batch = db.move_to_fridge(product["product_name"], quantity, user_id=user["id"])
-    return {**batch, "defrosted_at": datetime.now().strftime("%Y-%m-%d %H:%M")}
+    # quantity — сколько разморозили, batch_quantity — сколько теперь в партии
+    # (сегодняшние разморозки одного товара хранятся одной партией).
+    return {
+        **batch,
+        "quantity": quantity,
+        "batch_quantity": batch["quantity"],
+        "defrosted_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+    }
 
 
 @router.get("/catalog")
@@ -197,6 +204,7 @@ def delivery(form: DeliveryForm, user: dict = Depends(current_user), db: Databas
             "product_name": product["name"],
             "quantity": quantity,
             "batch_id": batch["id"],
+            "batch_quantity": batch["quantity"],
             "expiration_date": batch["expiration_date"],
         }
     db.new_delivery(product["name"], quantity, user_id=user["id"])
