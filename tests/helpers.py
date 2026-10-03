@@ -116,7 +116,7 @@ class FakeSheetsServer:
 
     KEY = "KEY"
 
-    def __init__(self, titles=("fridge", "freezer", "products"), rows=1000, cols=26):
+    def __init__(self, titles=("Холодильник", "Морозильник", "Товары"), rows=1000, cols=26):
         self.sheets: dict[str, dict] = {}
         self._sheet_ids = itertools.count(1)
         self.fail: tuple[int, str] | None = None  # ответить ошибкой на всё
@@ -174,7 +174,13 @@ class FakeSheetsServer:
                 }}})
             elif "updateSheetProperties" in request:
                 properties = request["updateSheetProperties"]["properties"]
-                sheet = self.sheets[self._title_by_id(properties["sheetId"])]
+                old_title = self._title_by_id(properties["sheetId"])
+                sheet = self.sheets[old_title]
+                if "title" in properties:  # переименование, порядок листов тот же
+                    self.sheets = {
+                        (properties["title"] if title == old_title else title): value
+                        for title, value in self.sheets.items()
+                    }
                 grid = properties.get("gridProperties", {})
                 if "frozenRowCount" in grid:
                     if grid["frozenRowCount"] >= sheet["rows"]:

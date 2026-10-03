@@ -1,21 +1,26 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { Download, ExternalLink, Upload } from 'lucide-vue-next'
 import PageHeader from '../../components/PageHeader.vue'
 import { api } from '../../api.js'
+import { plural } from '../../dates.js'
 import { confirmAction } from '../../store.js'
-
-const SHEETS = { products: 'товары', freezer: 'морозильник', fridge: 'партии холодильника' }
 
 const settings = ref(null)
 const result = ref(null)
 const running = ref(false)
 
+// «Товары», «Морозильник» и «Холодильник» — названия листов приходят с сервера.
+const sheetList = computed(() => {
+  const titles = Object.values(settings.value?.sheets || {}).map((title) => `«${title}»`)
+  return `${titles.slice(0, -1).join(', ')} и ${titles.at(-1)}`
+})
+
 async function run(action) {
   const ok = await confirmAction(action === 'export'
     ? {
       title: 'Выгрузить в Google Таблицу?',
-      message: 'Листы products, freezer и fridge будут очищены и заполнены данными из базы.',
+      message: `Листы ${sheetList.value} будут очищены и заполнены данными из базы.`,
       confirmText: 'Выгрузить',
     }
     : {
@@ -52,7 +57,7 @@ onMounted(async () => {
     <div class="stack stack-tight">
       <template v-if="result.counts">
         <b>{{ result.action === 'export' ? 'Экспорт завершён' : 'Импорт завершён' }}</b>
-        <span v-for="(count, sheet) in result.counts" :key="sheet">{{ sheet }} ({{ SHEETS[sheet] }}): {{ count }} строк</span>
+        <span v-for="(count, table) in result.counts" :key="table">{{ settings?.sheets[table] || table }}: {{ count }} {{ plural(count, 'строка', 'строки', 'строк') }}</span>
         <span v-if="result.backup" class="muted">Копия базы до импорта: {{ result.backup }}</span>
       </template>
       <template v-else>
@@ -84,7 +89,10 @@ onMounted(async () => {
   <div class="grid-2 mt">
     <section class="card stack">
       <h2>Экспорт</h2>
-      <p class="muted">Листы products, freezer и fridge будут заполнены текущими данными. Остальные листы не трогаются.</p>
+      <p class="muted">
+        Листы {{ sheetList }} будут заполнены текущими данными: названия столбцов по-русски, даты — ДД.ММ.ГГГГ.
+        Остальные листы не трогаются.
+      </p>
       <button class="btn btn-primary" type="button" :disabled="running" @click="run('export')">
         <Upload class="icon" :size="24" :stroke-width="1.75" /> Выгрузить в таблицу
       </button>

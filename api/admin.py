@@ -246,6 +246,8 @@ def _google_settings(settings: dict) -> dict:
         "email": (
             google_sheets._service_account_email(credentials_file) if has_credentials else None
         ),
+        # Названия листов: {"products": "Товары", …}
+        "sheets": google_sheets.SHEET_TITLES,
     }
 
 
@@ -268,7 +270,9 @@ def google_sync(action: str, user: dict = Depends(admin_user),
             counts = google_sheets.export_to_google(
                 db, settings["google_table"], settings["credentials_file"]
             )
-            db.log_change("google_export", ", ".join(f"{k}: {v}" for k, v in counts.items()), user["id"])
+            db.log_change("google_export", ", ".join(
+                f"{google_sheets.SHEET_TITLES[table]}: {count}" for table, count in counts.items()
+            ), user["id"])
             return {"counts": counts}
         counts, backup = google_sheets.import_from_google(
             db, settings["google_table"], settings["credentials_file"], user_id=user["id"]

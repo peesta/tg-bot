@@ -20,6 +20,12 @@ from tests.helpers import (
 
 
 HEADERS = {
+    "products": ["Название", "Срок после разморозки, дней", "Срок в морозильнике, дней", "Категория"],
+    "freezer": ["Товар", "Количество, шт."],
+    "fridge": ["№ партии", "Товар", "Количество, шт.", "Добавлено", "Годен до"],
+}
+# Как было до перевода на русский: листы и столбцы с названиями из базы.
+OLD_HEADERS = {
     "products": ["name", "fridge_storage_time", "freezer_storage_time", "category"],
     "freezer": ["product_name", "quantity"],
     "fridge": ["id", "product_name", "quantity", "date_added", "expiration_date"],
@@ -56,29 +62,42 @@ class ParseTablesTest(unittest.TestCase):
         })
         self.assertTrue(all("строка" in error for error in errors))
         expected_parts = [
-            "products, строка 3: товар «медовик» уже есть в строке 2",
-            "products, строка 4: не указано название",
-            "products, строка 5: fridge_storage_time",
-            "products, строка 6: freezer_storage_time",
-            "freezer, строка 3: товар «Медовик» уже есть в строке 2",
-            "freezer, строка 4: товара «Чизкейк» нет на листе products",
-            "freezer, строка 5: quantity",
-            "fridge, строка 3: партия с id 1 уже есть в строке 2",
-            "fridge, строка 4: id",
-            "fridge, строка 4: date_added",
-            "fridge, строка 4: expiration_date",
-            "fridge, строка 5: срок годности раньше даты добавления",
+            "Товары, строка 3: товар «медовик» уже есть в строке 2",
+            "Товары, строка 4: не указано название",
+            "Товары, строка 5: «Срок после разморозки, дней»",
+            "Товары, строка 6: «Срок в морозильнике, дней»",
+            "Морозильник, строка 3: товар «Медовик» уже есть в строке 2",
+            "Морозильник, строка 4: товара «Чизкейк» нет на листе «Товары»",
+            "Морозильник, строка 5: «Количество, шт.»",
+            "Холодильник, строка 3: партия с id 1 уже есть в строке 2",
+            "Холодильник, строка 4: «№ партии»",
+            "Холодильник, строка 4: «Добавлено»",
+            "Холодильник, строка 4: «Годен до»",
+            "Холодильник, строка 5: срок годности раньше даты добавления",
         ]
+        # Английских названий из базы в сообщениях нет.
+        for word in ("products", "freezer", "fridge", "quantity", "name"):
+            self.assertFalse(any(word in error for error in errors), word)
         for part in expected_parts:
             self.assertTrue(any(part in error for error in errors), part)
 
     def test_missing_column_and_empty_sheet(self):
-        sheets = {"products": [["name"], ["Медовик"]], "freezer": [HEADERS["freezer"]], "fridge": [HEADERS["fridge"]]}
-        self.assertEqual(import_errors(sheets), ["products: нет столбцов fridge_storage_time."])
+        sheets = {"products": [["Название"], ["Медовик"]], "freezer": [HEADERS["freezer"]], "fridge": [HEADERS["fridge"]]}
+        self.assertEqual(import_errors(sheets), ["Товары: нет столбцов «Срок после разморозки, дней»."])
         sheets["products"] = []
         self.assertIn("лист пуст", import_errors(sheets)[0])
 
+    def test_short_russian_headers(self):
+        tables = google_sheets.parse_tables({
+            "products": [["  НАЗВАНИЕ ", "срок после разморозки"], ["Медовик", "2"]],
+            "freezer": [["Количество", "товар"], ["3", "Медовик"]],
+            "fridge": [["Годен до", "Количество", "Товар", "Добавлено"], ["05.10.2026", "1", "Медовик", "03.10.2026"]],
+        })
+        self.assertEqual(tables["freezer"], [{"product_name": "Медовик", "quantity": 3}])
+        self.assertEqual(tables["fridge"][0]["date_added"], "2026-10-03")
+
     def test_column_order_case_and_extra_columns(self):
+        # Старые английские заголовки (как в базе) тоже понимаются.
         tables = google_sheets.parse_tables({
             "products": [["Комментарий", "FRIDGE_STORAGE_TIME", "Name"], ["x", "2", "Медовик"]],
             "freezer": [["quantity", "product_name"], ["1 000", "Медовик"]],
@@ -116,26 +135,42 @@ class ExportImportTest(TempDatabaseTestCase):
         ))
 
     def test_export(self):
-        self.server = FakeSheetsServer(titles=("freezer", "products", "Заметки"))
-        self.server.set_values("freezer", [["мусор"] * 3] * 50)
-        self.server.set_values("Заметки", [["не трогать"]])
+        # Листы, выгруженные раньше под английскими названиями, переименовываются.
+        old = FakeSheetsServer(titles=("freezer", "products", "Заметки"))
+        old.set_values("freezer", [["мусор"] * 3] * 50)
+        old.set_values("Заметки", [["не трогать"]])
+        self.server = old
 
         self.assertEqual(self.export(), {"products": 4, "freezer": 3, "fridge": 2})
 
-        self.assertIn("fridge", self.server.sheets)  # лист создан
-        self.assertEqual(len(self.server.values("freezer")), 4)  # старое стёрто
+        self.assertEqual(list(self.server.sheets), ["Морозильник", "Товары", "Заметки", "Холодильник"])
+        self.assertEqual(len(self.server.values("Морозильник")), 4)  # старое стёрто
         self.assertEqual(self.server.values("Заметки"), [["не трогать"]])
-        self.assertEqual(self.server.values("products")[0], HEADERS["products"])
-        self.assertIn(["=SUM(A1:A2)", 1, "", ""], self.server.values("products"))
-        for title in HEADERS:
+        self.assertEqual(self.server.values("Товары")[0], HEADERS["products"])
+        self.assertIn(["=SUM(A1:A2)", 1, "", ""], self.server.values("Товары"))
+        self.assertEqual(self.server.values("Холодильник")[0], HEADERS["fridge"])
+        for row in self.server.values("Холодильник")[1:]:  # даты — ДД.ММ.ГГГГ
+            self.assertRegex(row[3], r"^\d{2}\.\d{2}\.\d{4}$")
+            self.assertRegex(row[4], r"^\d{2}\.\d{2}\.\d{4}$")
+        for title in ("Товары", "Морозильник", "Холодильник"):
             self.assertTrue(self.server.sheets[title]["bold"])
             self.assertEqual(self.server.sheets[title]["frozen"], 1)
+
+    def test_import_old_english_sheets(self):
+        old = FakeSheetsServer(titles=("products", "freezer", "fridge"))
+        old.set_values("products", [OLD_HEADERS["products"], ["Медовик", "4"]])
+        old.set_values("freezer", [OLD_HEADERS["freezer"], ["Медовик", "7"]])
+        old.set_values("fridge", [OLD_HEADERS["fridge"], ["", "Медовик", "2", "2026-10-01", "2026-10-05"]])
+        self.server = old
+        self.import_()
+        self.assertEqual(self.db.get_freezer_product("Медовик")["quantity"], 7)
+        self.assertEqual(self.db.fridge_batches_list()[0]["expiration_date"], "2026-10-05")
 
     def test_export_resizes_small_sheets(self):
         small = FakeSheetsServer(rows=1, cols=1)
         self.export(server=small)
-        self.assertGreaterEqual(small.sheets["fridge"]["cols"], 5)
-        self.assertEqual(len(small.values("products")), 5)
+        self.assertGreaterEqual(small.sheets["Холодильник"]["cols"], 5)
+        self.assertEqual(len(small.values("Товары")), 5)
 
         empty_db = Database(str(self.temp_path / "empty.db"))
         self.assertEqual(self.export(server=FakeSheetsServer(rows=1, cols=1), db=empty_db),
@@ -151,10 +186,10 @@ class ExportImportTest(TempDatabaseTestCase):
 
     def test_import_edits_made_in_table(self):
         self.export()
-        products = [row for row in self.server.values("products") if row[0] != "Калифорния"]
-        self.server.set_values("products", products + [["  Новый   ролл ", "2", "", "Роллы"]])
-        self.server.set_values("freezer", self.server.values("freezer") + [["Новый ролл", "1 000"]])
-        self.server.set_values("fridge", self.server.values("fridge") + [
+        products = [row for row in self.server.values("Товары") if row[0] != "Калифорния"]
+        self.server.set_values("Товары", products + [["  Новый   ролл ", "2", "", "Роллы"]])
+        self.server.set_values("Морозильник", self.server.values("Морозильник") + [["Новый ролл", "1 000"]])
+        self.server.set_values("Холодильник", self.server.values("Холодильник") + [
             ["", "Новый ролл", "5.0", "", "05.10.2026"], ["", "", "", "", ""],
         ])
 
@@ -174,9 +209,9 @@ class ExportImportTest(TempDatabaseTestCase):
 
     def test_import_with_errors_changes_nothing(self):
         before = self.db.stock_tables()
-        self.server.set_values("products", [HEADERS["products"], ["Медовик", "0"]])
-        self.server.set_values("freezer", [HEADERS["freezer"]])
-        self.server.set_values("fridge", [HEADERS["fridge"]])
+        self.server.set_values("Товары", [HEADERS["products"], ["Медовик", "0"]])
+        self.server.set_values("Морозильник", [HEADERS["freezer"]])
+        self.server.set_values("Холодильник", [HEADERS["fridge"]])
 
         with mock.patch.object(google_sheets, "open_spreadsheet", return_value=fake_spreadsheet(self.server)):
             with self.assertRaises(ImportDataError):
@@ -187,9 +222,9 @@ class ExportImportTest(TempDatabaseTestCase):
 
     def test_import_saves_backup(self):
         before = self.db.stock_tables()
-        self.server.set_values("products", [HEADERS["products"], ["Медовик", "4"]])
-        self.server.set_values("freezer", [HEADERS["freezer"], ["Медовик", "7"]])
-        self.server.set_values("fridge", [HEADERS["fridge"]])
+        self.server.set_values("Товары", [HEADERS["products"], ["Медовик", "4"]])
+        self.server.set_values("Морозильник", [HEADERS["freezer"], ["Медовик", "7"]])
+        self.server.set_values("Холодильник", [HEADERS["fridge"]])
 
         with mock.patch.object(google_sheets, "open_spreadsheet", return_value=fake_spreadsheet(self.server)):
             counts, backup_path = google_sheets.import_from_google(self.db, "KEY")
@@ -199,10 +234,10 @@ class ExportImportTest(TempDatabaseTestCase):
         self.assertEqual(self.db.get_freezer_product("Медовик")["quantity"], 7)
 
     def test_missing_sheet(self):
-        del self.server.sheets["fridge"]
+        del self.server.sheets["Холодильник"]
         with self.assertRaises(ImportDataError) as caught:
             google_sheets.read_tables(fake_spreadsheet(self.server))
-        self.assertEqual(caught.exception.errors, ["В таблице нет листа «fridge»."])
+        self.assertEqual(caught.exception.errors, ["В таблице нет листа «Холодильник»."])
 
     def test_google_error_during_export(self):
         spreadsheet = fake_spreadsheet(self.server)
@@ -297,25 +332,28 @@ class GooglePageTest(ApiTestCase):
     def test_admin_only(self):
         self.login("employee")
         self.assertEqual(self.client.post("/api/admin/google/export").status_code, 403)
-        self.assertEqual(self.server.values("freezer"), [])
+        self.assertEqual(self.server.values("Морозильник"), [])
 
     def test_settings(self):
         self.login("admin")
         settings = self.client.get("/api/admin/google").json()
         self.assertEqual(settings["table"], TABLE_URL)
         self.assertFalse(settings["has_credentials"])
+        self.assertEqual(settings["sheets"], {"products": "Товары", "freezer": "Морозильник", "fridge": "Холодильник"})
 
     def test_export(self):
         self.login("admin")
         response = self.client.post("/api/admin/google/export")
         self.assertEqual(response.json()["counts"]["freezer"], 1)
-        self.assertEqual(self.server.values("freezer")[1], ["Медовик", 5])
-        self.assertEqual(self.changes("google_export")[-1]["user_id"], self.ADMIN_ID)
+        self.assertEqual(self.server.values("Морозильник")[1], ["Медовик", 5])
+        change = self.changes("google_export")[-1]
+        self.assertEqual(change["user_id"], self.ADMIN_ID)
+        self.assertEqual(change["details"], "Товары: 1, Морозильник: 1, Холодильник: 0")
 
     def test_import_with_errors(self):
-        self.server.set_values("products", [HEADERS["products"], ["Медовик", "3"]])
-        self.server.set_values("freezer", [HEADERS["freezer"], ["Чизкейк", "ноль"]])
-        self.server.set_values("fridge", [HEADERS["fridge"]])
+        self.server.set_values("Товары", [HEADERS["products"], ["Медовик", "3"]])
+        self.server.set_values("Морозильник", [HEADERS["freezer"], ["Чизкейк", "ноль"]])
+        self.server.set_values("Холодильник", [HEADERS["fridge"]])
         self.login("admin")
 
         response = self.client.post("/api/admin/google/import")
@@ -327,9 +365,9 @@ class GooglePageTest(ApiTestCase):
         self.assertEqual(self.errors()[-1]["error_type"], "ImportDataError")
 
     def test_import(self):
-        self.server.set_values("products", [HEADERS["products"], ["Медовик", "3"]])
-        self.server.set_values("freezer", [HEADERS["freezer"], ["Медовик", "9"]])
-        self.server.set_values("fridge", [HEADERS["fridge"]])
+        self.server.set_values("Товары", [HEADERS["products"], ["Медовик", "3"]])
+        self.server.set_values("Морозильник", [HEADERS["freezer"], ["Медовик", "9"]])
+        self.server.set_values("Холодильник", [HEADERS["fridge"]])
         self.login("admin")
 
         result = self.client.post("/api/admin/google/import").json()
