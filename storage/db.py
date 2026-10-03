@@ -214,8 +214,10 @@ class Database:
     ) -> dict:
         """Перемещает указанное количество продукта в холодильник.
 
-        Возвращает созданную партию: id, product_name, quantity, date_added,
-        expiration_date.
+        Если сегодня этот продукт уже клали в холодильник с тем же сроком,
+        количество добавляется к той партии. Возвращает партию как в
+        холодильнике: id, product_name, quantity (сколько в партии теперь),
+        date_added, expiration_date.
         """
         self._validate_quantity(quantity)
 
@@ -262,8 +264,14 @@ class Database:
     def _add_fridge_batch(
         self, cursor: sqlite3.Cursor, product_name: str, quantity: int
     ) -> dict:
-        """Создаёт партию в холодильнике со сроком годности от сегодняшнего
-        дня. Общая часть разморозки и поставки сразу в холодильник."""
+        """Кладёт продукт в холодильник со сроком годности от сегодняшнего
+        дня. Общая часть разморозки и поставки сразу в холодильник.
+
+        Продукт, который сегодня уже клали в холодильник, хранится одной
+        партией: количество добавляется к ней. Партии с разными сроками
+        годности не объединяются (например, если срок хранения товара
+        изменили днём или дату поправили в редакторе базы).
+        """
         cursor.execute(
             """
             SELECT fridge_storage_time FROM products WHERE name = ?
@@ -287,23 +295,44 @@ class Database:
             added_at + timedelta(days=fridge_storage_time)
         ).strftime("%Y-%m-%d")
 
+        same_day = (product_name, date_added, expiration_date)
+        same_day_batch = """
+            SELECT id FROM fridge
+            WHERE product_name = ? AND date_added = ? AND expiration_date = ?
+            ORDER BY id LIMIT 1
+        """
+        # Сначала UPDATE: он открывает запись в базу, и два одновременных
+        # запроса не создадут две партии за один день.
         cursor.execute(
-            """
-            INSERT INTO fridge (
-                product_name,
-                quantity,
-                date_added,
-                expiration_date
-            )
-            VALUES (?, ?, ?, ?)
-            """,
-            (product_name, quantity, date_added, expiration_date),
+            f"UPDATE fridge SET quantity = quantity + ? WHERE id = ({same_day_batch})",
+            (quantity, *same_day),
         )
+        if cursor.rowcount:
+            cursor.execute(
+                f"SELECT id, quantity FROM fridge WHERE id = ({same_day_batch})",
+                same_day,
+            )
+            row = cursor.fetchone()
+            batch_id, batch_quantity = row["id"], row["quantity"]
+        else:
+            cursor.execute(
+                """
+                INSERT INTO fridge (
+                    product_name,
+                    quantity,
+                    date_added,
+                    expiration_date
+                )
+                VALUES (?, ?, ?, ?)
+                """,
+                (product_name, quantity, date_added, expiration_date),
+            )
+            batch_id, batch_quantity = cursor.lastrowid, quantity
 
         return {
-            "id": cursor.lastrowid,
+            "id": batch_id,
             "product_name": product_name,
-            "quantity": quantity,
+            "quantity": batch_quantity,
             "date_added": date_added,
             "expiration_date": expiration_date,
         }
@@ -535,9 +564,10 @@ class Database:
     ) -> dict:
         """Добавляет поставку сразу в холодильник, минуя морозильник.
 
-        Создаёт отдельную партию со сроком «годен до», как при разморозке.
-        В журнале это поставка (delivery) с номером партии — у поставки
-        в морозильник номера партии нет. Возвращает созданную партию.
+        Партия со сроком «годен до» — как при разморозке, вместе с тем, что
+        сегодня уже положили в холодильник. В журнале это поставка
+        (delivery) с номером партии — у поставки в морозильник номера партии
+        нет. Возвращает партию как в холодильнике.
         """
         self._validate_quantity(quantity)
 

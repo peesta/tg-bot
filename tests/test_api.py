@@ -122,15 +122,19 @@ class StaffTest(ApiTestCase):
 
         response = self.client.post("/api/defrost", json={"product_id": freezer[0]["id"], "quantity": 2})
         batch = response.json()
-        self.assertEqual(batch["quantity"], 2)
+        self.assertEqual((batch["quantity"], batch["batch_quantity"]), (2, 2))
         self.assertRegex(batch["expiration_date"], r"^\d{4}-\d{2}-\d{2}$")
         self.assertEqual(self.db.get_freezer_product("Медовик")["quantity"], 3)
+
+        # Вторая разморозка за день — в ту же партию.
+        again = self.client.post("/api/defrost", json={"product_id": freezer[0]["id"], "quantity": 1}).json()
+        self.assertEqual((again["id"], again["quantity"], again["batch_quantity"]), (batch["id"], 1, 3))
 
         with self.db.cursor() as cursor:
             cursor.execute("SELECT operation_type, created_by FROM operations")
             self.assertEqual(
                 [tuple(row) for row in cursor.fetchall()],
-                [("delivery", self.EMPLOYEE_ID), ("defrost", self.EMPLOYEE_ID)],
+                [("delivery", self.EMPLOYEE_ID), ("defrost", self.EMPLOYEE_ID), ("defrost", self.EMPLOYEE_ID)],
             )
 
     def test_delivery_to_fridge(self):
@@ -155,6 +159,12 @@ class StaffTest(ApiTestCase):
         # В журнале — поставка с номером партии.
         [row] = self.client.get("/api/history", params={"type": "delivery"}).json()["items"]
         self.assertEqual((row["batch_id"], row["created_by"]), (result["batch_id"], self.EMPLOYEE_ID))
+
+        # Вторая поставка за день — в ту же партию.
+        again = self.client.post("/api/delivery", json={
+            "product_id": product["id"], "quantity": 2, "destination": "fridge",
+        }).json()
+        self.assertEqual((again["batch_id"], again["quantity"], again["batch_quantity"]), (result["batch_id"], 2, 5))
 
         response = self.client.post("/api/delivery", json={
             "product_id": product["id"], "quantity": 1, "destination": "shelf",

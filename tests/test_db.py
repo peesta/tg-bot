@@ -3,7 +3,7 @@ import sqlite3
 import unittest
 
 from storage.db import Database
-from tests.helpers import TempDatabaseTestCase
+from tests.helpers import TempDatabaseTestCase, set_expiration
 
 
 class FreezerTest(TempDatabaseTestCase):
@@ -66,6 +66,43 @@ class FridgeTest(TempDatabaseTestCase):
         self.assertIsNone(self.db.get_freezer_product("Медовик"))
         with self.assertRaises(ValueError):
             self.db.move_to_fridge("Медовик", 1)
+
+    def test_same_day_batches_are_stored_together(self):
+        first = self.db.move_to_fridge("Медовик", 2, user_id=10)
+        second = self.db.move_to_fridge("Медовик", 1, user_id=10)
+        delivered = self.db.new_fridge_delivery("Медовик", 4, user_id=10)
+        self.assertEqual(first["id"], second["id"])
+        self.assertEqual(first["id"], delivered["id"])
+        self.assertEqual(delivered["quantity"], 7)  # сколько в партии теперь
+        self.assertEqual(self.db.get_fridge_batch(first["id"]), delivered)
+        self.assertEqual(len(self.db.fridge_batches_list()), 1)
+
+        # В журнале — каждая операция отдельно, все с номером общей партии.
+        with self.db.cursor() as cursor:
+            cursor.execute("SELECT operation_type, batch_id, quantity FROM operations WHERE batch_id IS NOT NULL")
+            rows = [tuple(row) for row in cursor.fetchall()]
+        self.assertEqual(rows, [
+            ("defrost", first["id"], 2), ("defrost", first["id"], 1), ("delivery", first["id"], 4),
+        ])
+
+        # После частичной продажи партия пополняется так же.
+        self.db.clear_expired_product(id=first["id"], quantity=6, operation_type="sale")
+        self.assertEqual(self.db.new_fridge_delivery("Медовик", 2)["quantity"], 3)
+
+    def test_batches_with_other_dates_are_separate(self):
+        self.db.new_product("Лосось", 3)
+        self.db.new_delivery("Лосось", 5)
+        honey = self.db.move_to_fridge("Медовик", 1)
+        salmon = self.db.move_to_fridge("Лосось", 1)
+        self.assertNotEqual(honey["id"], salmon["id"])  # другой товар
+
+        set_expiration(self.db, honey["id"], 1)  # срок поправили в редакторе базы
+        self.assertNotEqual(self.db.move_to_fridge("Медовик", 1)["id"], honey["id"])
+
+        with self.db.cursor() as cursor:
+            cursor.execute("UPDATE fridge SET date_added = '2000-01-01' WHERE id = ?", (salmon["id"],))
+        self.assertNotEqual(self.db.move_to_fridge("Лосось", 1)["id"], salmon["id"])  # вчерашняя
+        self.assertEqual(len(self.db.fridge_batches_list()), 4)
 
     def test_write_off_and_sale_texts(self):
         batch = self.db.move_to_fridge("Медовик", 3)
