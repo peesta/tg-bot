@@ -49,6 +49,21 @@ class ConfigTest(unittest.TestCase):
                     main.get_settings()
 
 
+class SiteLinksTest(unittest.TestCase):
+    def test_local_only(self):
+        self.assertEqual(main.site_links("127.0.0.1", 8000), ["http://127.0.0.1:8000"])
+
+    def test_all_addresses_show_lan_link(self):
+        with mock.patch.object(main, "local_ip", return_value="192.168.1.5"):
+            links = main.site_links("0.0.0.0", 8080)
+        self.assertEqual(links[0], "http://127.0.0.1:8080")
+        self.assertTrue(links[1].startswith("http://192.168.1.5:8080"))
+
+    def test_no_network(self):
+        with mock.patch.object(main, "local_ip", return_value=None):
+            self.assertEqual(main.site_links("0.0.0.0", 8000), ["http://127.0.0.1:8000"])
+
+
 class SetPasswordTest(unittest.TestCase):
     def setUp(self):
         temp_dir = tempfile.TemporaryDirectory()

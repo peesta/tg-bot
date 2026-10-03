@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "postbuild": "node scripts/after-build.js",
     "preview": "vite preview",
     "test": "vitest run"
   },
@@ -19,5 +20,8 @@
     "@vitejs/plugin-vue": "^6.0.9",
     "vite": "^8.3.2",
     "vitest": "^5.0.3"
+  },
+  "engines": {
+    "node": ">=22.12.0"
   }
 }

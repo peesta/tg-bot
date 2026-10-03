@@ -7,6 +7,10 @@ export default defineConfig({
   server: {
     proxy: { '/api': 'http://127.0.0.1:8000' },
   },
+  build: {
+    // Без сообщений о том, сколько времени заняли плагины: это не ошибка.
+    rolldownOptions: { checks: { bundlerTimings: false } },
+  },
   test: {
     environment: 'node',
   },

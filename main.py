@@ -9,6 +9,7 @@ import argparse
 import getpass
 import logging
 import os
+import socket
 import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -24,7 +25,9 @@ from storage.db import Database
 
 DATABASE_PATH = "data/database.db"
 LOG_FILE = "data/logs/app.log"
+FRONTEND_INDEX = Path(__file__).resolve().parent / "frontend" / "dist" / "index.html"
 TRUE_VALUES = ("1", "true", "yes", "on", "да")
+ALL_ADDRESSES = ("0.0.0.0", "::")
 
 
 def get_settings() -> dict:
@@ -41,6 +44,27 @@ def get_settings() -> dict:
         "google_table": os.getenv("GOOGLE_TABLE", "").strip() or None,
         "secure_cookies": os.getenv("SECURE_COOKIES", "").strip().lower() in TRUE_VALUES,
     }
+
+
+def local_ip() -> str | None:
+    """Адрес компьютера в локальной сети (пакеты при этом не отправляются)."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect(("10.255.255.255", 1))
+            return probe.getsockname()[0]
+    except OSError:
+        return None
+
+
+def site_links(host: str, port: int) -> list[str]:
+    """Ссылки, по которым открыть сайт после запуска."""
+    if host not in ALL_ADDRESSES:
+        return [f"http://{host}:{port}"]
+    links = [f"http://127.0.0.1:{port}"]
+    ip = local_ip()
+    if ip and not ip.startswith("127."):
+        links.append(f"http://{ip}:{port}   (с планшета в той же сети)")
+    return links
 
 
 def setup_logging(log_file: str) -> None:
@@ -101,7 +125,13 @@ def main(argv: list[str] | None = None) -> None:
     })
     if settings["google_table"] is None:
         logging.warning("GOOGLE_TABLE не задан: экспорт и импорт Google Таблицы работать не будут")
-    logging.info("Сайт запущен: http://%s:%s", settings["host"], settings["port"])
+    if not FRONTEND_INDEX.is_file():
+        logging.warning(
+            "Фронтенд не собран — вместо сайта будет подсказка. "
+            "Выполните: cd frontend && npm install && npm run build"
+        )
+    links = "\n".join(f"    {link}" for link in site_links(settings["host"], settings["port"]))
+    logging.info("Сайт запускается. Откройте в браузере:\n%s\nОстановить: Ctrl+C", links)
     uvicorn.run(app, host=settings["host"], port=settings["port"], log_config=None)
 
 
