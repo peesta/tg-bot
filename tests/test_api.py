@@ -428,6 +428,18 @@ class FrontendTest(ApiTestCase):
         self.assertEqual(response.text, "<div id=app></div>")
         self.assertEqual(self.client.get("/api/nope").status_code, 404)
 
+    def test_icons_from_dist_root(self):
+        dist = self.temp_path / "dist"
+        dist.mkdir()
+        (dist / "index.html").write_text("<div id=app></div>", encoding="utf-8")
+        (dist / "favicon.svg").write_text("<svg/>", encoding="utf-8")
+        (dist / "manifest.webmanifest").write_text("{}", encoding="utf-8")
+        response = self.client.get("/favicon.svg")
+        self.assertEqual((response.text, response.headers["content-type"]), ("<svg/>", "image/svg+xml"))
+        self.assertEqual(self.client.get("/manifest.webmanifest").headers["content-type"], "application/manifest+json")
+        # Файлы вне dist недоступны.
+        self.assertEqual(self.client.get("/..%2Fsecret_key").text, "<div id=app></div>")
+
 
 if __name__ == "__main__":
     unittest.main()
