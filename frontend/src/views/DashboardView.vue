@@ -4,7 +4,7 @@ import { CircleCheck, Hourglass, TriangleAlert } from 'lucide-vue-next'
 import PageHeader from '../components/PageHeader.vue'
 import { api } from '../api.js'
 import { formatDateTime, formatDatesInText, formatTime } from '../dates.js'
-import { OPERATION_TITLES, CHANGE_TITLES, authorName } from '../labels.js'
+import { OPERATION_TITLES, CHANGE_TITLES, authorName, deliveryPlace } from '../labels.js'
 import { WORK_NAV } from '../nav.js'
 import { store } from '../store.js'
 
@@ -17,7 +17,7 @@ const statCards = computed(() => {
   if (!stats) return []
   return [
     { value: stats.products, label: 'товаров в справочнике', to: '/admin/products' },
-    { value: stats.freezer_quantity, label: `шт. в морозильнике, ${stats.freezer_items} поз.`, to: '/stock' },
+    { value: stats.freezer_quantity, label: `шт. в морозильнике, ${stats.freezer_items} поз.`, to: '/stock?tab=freezer' },
     { value: stats.fridge_batches, label: `партий в холодильнике, ${stats.fridge_quantity} шт.`, to: '/stock' },
     { value: stats.expiring_today, label: 'истекает сегодня', to: '/expiring', tone: stats.expiring_today && 'warning' },
     { value: stats.expired, label: 'просрочено', to: '/expiring', tone: stats.expired && 'danger' },
@@ -70,7 +70,7 @@ onMounted(async () => {
           <li v-for="operation in data.my_operations" :key="operation.id">
             <span class="timeline-time">{{ formatTime(operation.created_at) }}</span>
             <span class="badge" :class="`badge-${operation.operation_type}`">{{ OPERATION_TITLES[operation.operation_type] }}</span>
-            <span>{{ operation.product_name }} — {{ operation.quantity }} шт<template v-if="operation.reason"> · {{ operation.reason }}</template></span>
+            <span>{{ operation.product_name }} — {{ operation.quantity }} шт<template v-if="deliveryPlace(operation)"> {{ deliveryPlace(operation) }}</template><template v-if="operation.reason"> · {{ operation.reason }}</template></span>
           </li>
         </ul>
         <p v-else class="muted">Сегодня вы ещё ничего не делали.</p>
@@ -99,7 +99,7 @@ onMounted(async () => {
             <li v-for="operation in data.operations" :key="operation.id">
               <span class="timeline-time">{{ formatDateTime(operation.created_at) }}</span>
               <span class="badge" :class="`badge-${operation.operation_type}`">{{ OPERATION_TITLES[operation.operation_type] }}</span>
-              <span>{{ operation.product_name }} — {{ operation.quantity }} шт · {{ authorName(operation) }}</span>
+              <span>{{ operation.product_name }} — {{ operation.quantity }} шт<template v-if="deliveryPlace(operation)"> {{ deliveryPlace(operation) }}</template> · {{ authorName(operation) }}</span>
             </li>
           </ul>
           <p v-else class="muted">Операций пока не было.</p>

@@ -93,17 +93,17 @@ onMounted(load)
 
   <template v-if="products">
     <div v-if="shown.length" class="table-wrap">
-      <table class="table">
+      <table class="table table-stack">
         <thead>
           <tr><th>Название</th><th>Категория</th><th class="num">После разморозки</th><th class="num">В морозильнике хранится</th><th class="num">Остаток в морозильнике</th></tr>
         </thead>
         <tbody>
           <tr v-for="product in shown" :key="product.id" class="clickable" @click="openEdit(product)">
-            <td><b>{{ product.name }}</b></td>
-            <td>{{ product.category || '—' }}</td>
-            <td class="num">{{ product.fridge_storage_time }} дн.</td>
-            <td class="num">{{ product.freezer_storage_time ? `${product.freezer_storage_time} дн.` : '—' }}</td>
-            <td class="num">{{ product.freezer_quantity }} шт.</td>
+            <td class="cell-title"><b>{{ product.name }}</b></td>
+            <td data-label="Категория">{{ product.category || '—' }}</td>
+            <td class="num" data-label="После разморозки">{{ product.fridge_storage_time }} дн.</td>
+            <td class="num" data-label="В морозильнике хранится">{{ product.freezer_storage_time ? `${product.freezer_storage_time} дн.` : '—' }}</td>
+            <td class="num" data-label="Остаток в морозильнике">{{ product.freezer_quantity }} шт.</td>
           </tr>
         </tbody>
       </table>

@@ -62,19 +62,19 @@ onMounted(load)
   </PageHeader>
 
   <div v-if="users" class="table-wrap">
-    <table class="table">
+    <table class="table table-stack">
       <thead><tr><th>Имя</th><th>Логин</th><th>Роль</th><th>Доступ</th><th>Последний вход</th></tr></thead>
       <tbody>
         <tr v-for="person in users" :key="person.id" class="clickable" :class="{ 'row-muted': !person.is_active }" @click="openEdit(person)">
-          <td><b>{{ person.full_name }}</b><span v-if="person.id === store.user.id" class="muted"> (вы)</span></td>
-          <td>{{ person.username || '—' }}</td>
-          <td><span class="badge" :class="{ 'badge-admin': person.role === 'admin' }">{{ ROLE_TITLES[person.role] }}</span></td>
-          <td>
+          <td class="cell-title"><b>{{ person.full_name }}</b><span v-if="person.id === store.user.id" class="muted"> (вы)</span></td>
+          <td data-label="Логин">{{ person.username || '—' }}</td>
+          <td data-label="Роль"><span class="badge" :class="{ 'badge-admin': person.role === 'admin' }">{{ ROLE_TITLES[person.role] }}</span></td>
+          <td data-label="Доступ">
             <span v-if="!person.is_active" class="badge badge-off">Отключён</span>
             <span v-else-if="!person.username" class="badge badge-today">Нет логина</span>
             <span v-else class="badge badge-fresh">Есть</span>
           </td>
-          <td class="nowrap muted">{{ formatDateTime(person.last_login) || '—' }}</td>
+          <td class="nowrap muted" data-label="Последний вход">{{ formatDateTime(person.last_login) || '—' }}</td>
         </tr>
       </tbody>
     </table>

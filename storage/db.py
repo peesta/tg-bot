@@ -235,38 +235,7 @@ class Database:
             if freezer_quantity < quantity:
                 raise ValueError(f"Недостаточно {product_name} в морозильнике")
 
-            cursor.execute(
-                """
-                SELECT fridge_storage_time FROM products WHERE name = ?
-                """,
-                (product_name,),
-            )
-            product = cursor.fetchone()
-
-            if product is None:
-                raise ValueError(f"Продукт {product_name} не найден в базе данных")
-
-            fridge_storage_time = product["fridge_storage_time"]
-            added_at = datetime.now()
-            date_added = added_at.strftime("%Y-%m-%d")
-            expiration_date = (
-                added_at + timedelta(days=fridge_storage_time)
-            ).strftime("%Y-%m-%d")
-
-            cursor.execute(
-                """
-                INSERT INTO fridge (
-                    product_name,
-                    quantity,
-                    date_added,
-                    expiration_date
-                )
-                VALUES (?, ?, ?, ?)
-                """,
-                (product_name, quantity, date_added, expiration_date),
-            )
-
-            batch_id = cursor.lastrowid
+            batch = self._add_fridge_batch(cursor, product_name, quantity)
 
             if freezer_quantity == quantity:
                 cursor.execute(
@@ -285,16 +254,59 @@ class Database:
                 product_name=product_name,
                 quantity=quantity,
                 user_id=user_id,
-                batch_id=batch_id,
+                batch_id=batch["id"],
             )
 
-            return {
-                "id": batch_id,
-                "product_name": product_name,
-                "quantity": quantity,
-                "date_added": date_added,
-                "expiration_date": expiration_date,
-            }
+            return batch
+
+    def _add_fridge_batch(
+        self, cursor: sqlite3.Cursor, product_name: str, quantity: int
+    ) -> dict:
+        """Создаёт партию в холодильнике со сроком годности от сегодняшнего
+        дня. Общая часть разморозки и поставки сразу в холодильник."""
+        cursor.execute(
+            """
+            SELECT fridge_storage_time FROM products WHERE name = ?
+            """,
+            (product_name,),
+        )
+        product = cursor.fetchone()
+
+        if product is None:
+            raise ValueError(f"Продукт {product_name} не найден в базе данных")
+
+        fridge_storage_time = product["fridge_storage_time"]
+        if not fridge_storage_time:
+            raise ValueError(
+                f"У продукта {product_name} не задан срок хранения в холодильнике"
+            )
+
+        added_at = datetime.now()
+        date_added = added_at.strftime("%Y-%m-%d")
+        expiration_date = (
+            added_at + timedelta(days=fridge_storage_time)
+        ).strftime("%Y-%m-%d")
+
+        cursor.execute(
+            """
+            INSERT INTO fridge (
+                product_name,
+                quantity,
+                date_added,
+                expiration_date
+            )
+            VALUES (?, ?, ?, ?)
+            """,
+            (product_name, quantity, date_added, expiration_date),
+        )
+
+        return {
+            "id": cursor.lastrowid,
+            "product_name": product_name,
+            "quantity": quantity,
+            "date_added": date_added,
+            "expiration_date": expiration_date,
+        }
 
     def get_expiring_products(
         self,
@@ -514,6 +526,32 @@ class Database:
             return (
                 f"Успешно добавлено {quantity} {product_name} в морозильник"
             )
+
+    def new_fridge_delivery(
+        self,
+        product_name: str,
+        quantity: int,
+        user_id: int | None = None
+    ) -> dict:
+        """Добавляет поставку сразу в холодильник, минуя морозильник.
+
+        Создаёт отдельную партию со сроком «годен до», как при разморозке.
+        В журнале это поставка (delivery) с номером партии — у поставки
+        в морозильник номера партии нет. Возвращает созданную партию.
+        """
+        self._validate_quantity(quantity)
+
+        with self.cursor() as cursor:
+            batch = self._add_fridge_batch(cursor, product_name, quantity)
+            self._log_operation(
+                cursor=cursor,
+                operation_type="delivery",
+                product_name=product_name,
+                quantity=quantity,
+                user_id=user_id,
+                batch_id=batch["id"],
+            )
+            return batch
 
     def fridge_batches_list(
         self, 

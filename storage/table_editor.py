@@ -15,7 +15,7 @@ from storage.queries import normalize_text, page_of, search_cursor
 
 
 OPERATION_TITLES = {
-    "delivery": "Заморозка",
+    "delivery": "Поставка",
     "defrost": "Разморозка",
     "sale": "Продажа",
     "write_off": "Списание",
@@ -82,19 +82,19 @@ TABLES: dict[str, Table] = {
             row_title="«{product_name}»",
         ),
         Table(
-            "fridge", "Холодильник", "Размороженные партии и их сроки",
+            "fridge", "Холодильник", "Партии после разморозки или поставки и их сроки",
             (
                 Column("id", "№ партии", "int", readonly=True),
                 Column("product_name", "Товар", "product", required=True),
                 QUANTITY,
-                Column("date_added", "Дата разморозки", "date", required=True),
+                Column("date_added", "Добавлено", "date", required=True),
                 Column("expiration_date", "Годен до", "date", required=True),
             ),
             row_title="партия № {id} «{product_name}»",
         ),
         Table(
             "operations", "Журнал операций",
-            "Заморозка, разморозка, продажи и списания",
+            "Поставки, разморозка, продажи и списания",
             (
                 ID_COLUMN,
                 Column("operation_type", "Операция", "choice", required=True,

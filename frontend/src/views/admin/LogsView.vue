@@ -9,7 +9,7 @@ import PagerBar from '../../components/PagerBar.vue'
 import SearchBox from '../../components/SearchBox.vue'
 import { api } from '../../api.js'
 import { formatDate, formatDateTime, formatDatesInText, formatTime } from '../../dates.js'
-import { CHANGE_TITLES, OPERATION_TITLES, authorName } from '../../labels.js'
+import { CHANGE_TITLES, OPERATION_TITLES, authorName, deliveryPlace } from '../../labels.js'
 
 const TABS = [
   ['operations', 'Операции'],
@@ -71,7 +71,7 @@ onMounted(async () => {
     <button v-for="[key, title] in TABS" :key="key" type="button" :class="{ active: tab === key }" @click="tab = key">{{ title }}</button>
   </div>
 
-  <!-- Операции: заморозка, разморозка, продажи, списания -->
+  <!-- Операции: поставки, разморозка, продажи, списания -->
   <template v-if="tab === 'operations'">
     <form class="card form-grid mb" @submit.prevent="load()">
       <label class="field"><span class="field-label">Операция</span>
@@ -98,16 +98,19 @@ onMounted(async () => {
       <template v-else>
         <p class="muted mb-s">Найдено: {{ data.total }}</p>
         <div class="table-wrap">
-          <table class="table">
+          <table class="table table-stack">
             <thead><tr><th>Дата</th><th>Операция</th><th>Товар</th><th class="num">Шт.</th><th>Причина</th><th>Сотрудник</th></tr></thead>
             <tbody>
               <tr v-for="row in data.items" :key="row.id">
-                <td class="nowrap">{{ formatDate(row.created_at) }}<br><span class="muted">{{ formatTime(row.created_at) }}</span></td>
-                <td><span class="badge" :class="`badge-${row.operation_type}`">{{ OPERATION_TITLES[row.operation_type] }}</span></td>
-                <td>{{ row.product_name }}<template v-if="row.batch_id"><br><span class="muted">партия № {{ row.batch_id }}</span></template></td>
-                <td class="num">{{ row.quantity }}</td>
-                <td>{{ row.reason || '' }}</td>
-                <td>{{ authorName(row) }}</td>
+                <td class="nowrap" data-label="Дата">{{ formatDate(row.created_at) }} <br><span class="muted">{{ formatTime(row.created_at) }}</span></td>
+                <td data-label="Операция">
+                  <span class="badge" :class="`badge-${row.operation_type}`">{{ OPERATION_TITLES[row.operation_type] }}</span>
+                  <template v-if="deliveryPlace(row)"> <br><span class="muted nowrap">{{ deliveryPlace(row) }}</span></template>
+                </td>
+                <td class="cell-title">{{ row.product_name }}<template v-if="row.batch_id"> <br><span class="muted">партия № {{ row.batch_id }}</span></template></td>
+                <td class="num" data-label="Шт.">{{ row.quantity }}</td>
+                <td :class="{ 'cell-empty': !row.reason }" data-label="Причина">{{ row.reason || '' }}</td>
+                <td data-label="Сотрудник">{{ authorName(row) }}</td>
               </tr>
             </tbody>
           </table>

@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { LogOut, Menu, Snowflake, UserRound } from 'lucide-vue-next'
 import NoticeDialog from './NoticeDialog.vue'
@@ -32,41 +32,56 @@ async function loadNotice() {
   }
 }
 
+function onKey(event) {
+  if (event.key === 'Escape') drawerOpen.value = false
+}
+
 watch(() => route.fullPath, () => {
   drawerOpen.value = false
   refreshExpiringCount()
 })
 
 onMounted(() => {
+  document.addEventListener('keydown', onKey)
   refreshExpiringCount()
   loadNotice()
 })
+onBeforeUnmount(() => document.removeEventListener('keydown', onKey))
 </script>
 
 <template>
-  <!-- Сотрудник: узкое меню с крупными значками — удобно пальцем -->
-  <div v-if="store.user.role !== 'admin'" class="shell">
+  <!-- Сотрудник: узкое меню с крупными значками — удобно пальцем.
+       На телефоне меню выезжает слева по кнопке. -->
+  <div v-if="store.user.role !== 'admin'" class="shell" :class="{ 'drawer-open': drawerOpen }">
     <nav class="rail" aria-label="Меню">
-      <div class="rail-brand" aria-hidden="true"><Snowflake :size="32" :stroke-width="1.75" /></div>
+      <div class="rail-brand">
+        <Snowflake :size="32" :stroke-width="1.75" aria-hidden="true" />
+        <span class="rail-brand-text">Учёт сроков</span>
+      </div>
       <RouterLink
         v-for="item in WORK_NAV" :key="item.to" :to="item.to"
         class="rail-link" :class="{ active: isActive(item) }"
       >
         <component :is="item.icon" class="icon" :size="30" :stroke-width="1.75" />
-        <span><template v-for="(line, index) in item.lines" :key="line"><br v-if="index">{{ line }}</template></span>
+        <span class="rail-lines"><span v-for="line in item.lines" :key="line">{{ line }}</span></span>
+        <span class="rail-label">{{ item.label }}</span>
         <span v-if="item.badge && store.expiringCount" class="badge-count">{{ store.expiringCount }}</span>
       </RouterLink>
     </nav>
+    <div class="sidebar-backdrop" @click="drawerOpen = false" />
     <div class="main">
       <header class="topbar">
+        <button class="btn btn-ghost btn-icon menu-button" type="button" aria-label="Меню" @click="drawerOpen = true">
+          <Menu class="icon" :size="28" :stroke-width="1.75" />
+        </button>
         <span class="topbar-title">Учёт сроков</span>
         <span class="role-chip">Сотрудник</span>
         <div class="topbar-user">
-          <RouterLink to="/profile" class="btn btn-ghost">
-            <UserRound class="icon" :size="24" :stroke-width="1.75" /> {{ store.user.full_name }}
+          <RouterLink to="/profile" class="btn btn-ghost" :aria-label="`Профиль: ${store.user.full_name}`">
+            <UserRound class="icon" :size="24" :stroke-width="1.75" /> <span class="topbar-text">{{ store.user.full_name }}</span>
           </RouterLink>
-          <button class="btn btn-ghost" type="button" @click="logout">
-            <LogOut class="icon" :size="24" :stroke-width="1.75" /> Выйти
+          <button class="btn btn-ghost" type="button" aria-label="Выйти" @click="logout">
+            <LogOut class="icon" :size="24" :stroke-width="1.75" /> <span class="topbar-text">Выйти</span>
           </button>
         </div>
       </header>
@@ -107,13 +122,14 @@ onMounted(() => {
         <button class="btn btn-ghost btn-icon menu-button" type="button" aria-label="Меню" @click="drawerOpen = true">
           <Menu class="icon" :size="28" :stroke-width="1.75" />
         </button>
+        <span class="topbar-title topbar-title-phone">Учёт сроков</span>
         <span class="role-chip">Администратор</span>
         <div class="topbar-user">
-          <RouterLink to="/profile" class="btn btn-ghost">
-            <UserRound class="icon" :size="24" :stroke-width="1.75" /> {{ store.user.full_name }}
+          <RouterLink to="/profile" class="btn btn-ghost" :aria-label="`Профиль: ${store.user.full_name}`">
+            <UserRound class="icon" :size="24" :stroke-width="1.75" /> <span class="topbar-text">{{ store.user.full_name }}</span>
           </RouterLink>
-          <button class="btn btn-ghost" type="button" @click="logout">
-            <LogOut class="icon" :size="24" :stroke-width="1.75" /> Выйти
+          <button class="btn btn-ghost" type="button" aria-label="Выйти" @click="logout">
+            <LogOut class="icon" :size="24" :stroke-width="1.75" /> <span class="topbar-text">Выйти</span>
           </button>
         </div>
       </header>

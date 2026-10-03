@@ -9,6 +9,7 @@ const routes = [
   { path: '/defrost', component: () => import('./views/DefrostView.vue') },
   { path: '/delivery', component: () => import('./views/DeliveryView.vue') },
   { path: '/write-off', component: () => import('./views/WriteOffView.vue') },
+  { path: '/sale', component: () => import('./views/SaleView.vue') },
   { path: '/stock', component: () => import('./views/StockView.vue') },
   { path: '/history', component: () => import('./views/HistoryView.vue') },
   { path: '/profile', component: () => import('./views/ProfileView.vue') },

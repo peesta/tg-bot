@@ -7,8 +7,12 @@ import { api } from '../api.js'
 import { formatDate } from '../dates.js'
 import { toast } from '../store.js'
 
-// Списание или продажа одной партии.
-const props = defineProps({ batch: { type: Object, required: true } })
+// Списание или продажа одной партии. only задан — только это действие
+// (разделы «Списание» и «Продажа»), не задан — выбор (раздел «Скоро испортится»).
+const props = defineProps({
+  batch: { type: Object, required: true },
+  only: { type: String, default: null }, // write_off, sale
+})
 const emit = defineEmits(['close', 'done'])
 
 const REASONS = [
@@ -18,7 +22,7 @@ const REASONS = [
   ['other', 'Другая причина'],
 ]
 
-const mode = ref('write_off')
+const mode = ref(props.only || 'write_off')
 const reason = ref(props.batch.status === 'fresh' ? null : 'expired')
 const reasonText = ref('')
 const quantity = ref(Math.min(1, props.batch.quantity))
@@ -58,7 +62,7 @@ async function send() {
         <StatusBadge :status="batch.status" />
       </div>
 
-      <div class="segmented" role="tablist">
+      <div v-if="!only" class="segmented" role="tablist">
         <button type="button" :class="{ active: mode === 'write_off' }" @click="mode = 'write_off'">Списать</button>
         <button type="button" :class="{ active: mode === 'sale' }" @click="mode = 'sale'">Продано</button>
       </div>

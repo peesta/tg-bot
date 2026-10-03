@@ -4,6 +4,7 @@
 """
 from datetime import datetime, timedelta
 from math import ceil
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -11,6 +12,7 @@ from pydantic import BaseModel
 from api.deps import current_user, get_db
 from storage import queries
 from storage.db import Database
+from storage.table_editor import OPERATION_TITLES
 
 
 router = APIRouter(tags=["staff"])
@@ -29,6 +31,11 @@ RECENT_ROWS = 10
 class StockForm(BaseModel):
     product_id: int
     quantity: int
+
+
+class DeliveryForm(StockForm):
+    # Куда поставка: в морозильник (как раньше) или сразу в холодильник.
+    destination: Literal["freezer", "fridge"] = "freezer"
 
 
 class WriteOffForm(BaseModel):
@@ -75,6 +82,11 @@ def sum_by_product(items: list[dict]) -> list[dict]:
     for item in items:
         totals[item["product_name"]] = totals.get(item["product_name"], 0) + item["quantity"]
     return [{"product_name": name, "quantity": quantity} for name, quantity in totals.items()]
+
+
+def expires_after(days: int | None) -> str | None:
+    """Дата «годен до» для партии, которая появится в холодильнике сегодня."""
+    return (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d") if days else None
 
 
 def check_quantity(quantity: int | None, maximum: int, where: str) -> int:
@@ -150,10 +162,7 @@ def expiring_clear(user: dict = Depends(current_user), db: Database = Depends(ge
 def freezer(user: dict = Depends(current_user), db: Database = Depends(get_db)):
     items = queries.freezer_items(db)
     for item in items:
-        days = item["fridge_storage_time"]
-        item["expires"] = (
-            (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d") if days else None
-        )
+        item["expires"] = expires_after(item["fridge_storage_time"])
     return items
 
 
@@ -169,17 +178,30 @@ def defrost(form: StockForm, user: dict = Depends(current_user), db: Database = 
 
 @router.get("/catalog")
 def catalog(user: dict = Depends(current_user), db: Database = Depends(get_db)):
-    return queries.catalog(db)
+    items = queries.catalog(db)
+    for item in items:
+        item["expires"] = expires_after(item["fridge_storage_time"])
+    return items
 
 
 @router.post("/delivery")
-def delivery(form: StockForm, user: dict = Depends(current_user), db: Database = Depends(get_db)):
+def delivery(form: DeliveryForm, user: dict = Depends(current_user), db: Database = Depends(get_db)):
     product = db.get_product_by_id(form.product_id)
     if product is None:
         raise ValueError("Этого товара уже нет в справочнике")
     quantity = check_quantity(form.quantity, MAX_QUANTITY, "одна поставка")
+    if form.destination == "fridge":
+        batch = db.new_fridge_delivery(product["name"], quantity, user_id=user["id"])
+        return {
+            "destination": "fridge",
+            "product_name": product["name"],
+            "quantity": quantity,
+            "batch_id": batch["id"],
+            "expiration_date": batch["expiration_date"],
+        }
     db.new_delivery(product["name"], quantity, user_id=user["id"])
     return {
+        "destination": "freezer",
         "product_name": product["name"],
         "quantity": quantity,
         "in_freezer": db.get_freezer_product(product["name"])["quantity"],
@@ -253,9 +275,12 @@ def stock(user: dict = Depends(current_user), db: Database = Depends(get_db)):
 
 
 @router.get("/history")
-def history(page: int = 1, user: dict = Depends(current_user), db: Database = Depends(get_db)):
+def history(page: int = 1, type: str | None = None,
+            user: dict = Depends(current_user), db: Database = Depends(get_db)):
+    """История операций; type — sale, write_off и т.д., без него — все."""
     page = max(page, 1)
     total, items = queries.operations_log(
-        db, page=page, limit=HISTORY_PAGE_SIZE, operation_type="write_off"
+        db, page=page, limit=HISTORY_PAGE_SIZE,
+        operation_type=type if type in OPERATION_TITLES else None,
     )
     return paged(total, items, page, HISTORY_PAGE_SIZE)

@@ -267,6 +267,21 @@ class LoggingTest(TempDatabaseTestCase):
             rows = [tuple(row) for row in cursor.fetchall()]
         self.assertEqual(rows, [("delivery", 5, 7), ("defrost", 2, 7)])
 
+    def test_delivery_to_fridge_is_delivery_with_batch(self):
+        self.db.new_product("Медовик", 3)
+        batch = self.db.new_fridge_delivery("Медовик", 4, user_id=7)
+        self.assertEqual(self.db.get_fridge_batch(batch["id"]), batch)
+        self.assertIsNone(self.db.get_freezer_product("Медовик"))
+        with self.db.cursor() as cursor:
+            cursor.execute("SELECT operation_type, batch_id, quantity, created_by FROM operations")
+            rows = [tuple(row) for row in cursor.fetchall()]
+        self.assertEqual(rows, [("delivery", batch["id"], 4, 7)])
+
+        with self.assertRaises(ValueError):
+            self.db.new_fridge_delivery("Нет такого", 1)
+        with self.assertRaises(ValueError):
+            self.db.new_fridge_delivery("Медовик", 0)
+
     def test_new_employees_and_their_rights(self):
         self.db.add_user(10, "Иван", created_by=1)
         with self.assertRaises(ValueError):

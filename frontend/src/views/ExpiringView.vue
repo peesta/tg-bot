@@ -65,15 +65,15 @@ onMounted(load)
         </li>
       </ul>
       <div class="table-wrap">
-        <table class="table">
+        <table class="table table-stack">
           <thead><tr><th>Товар</th><th class="num">Шт.</th><th>Годен до</th><th>Партия</th><th /></tr></thead>
           <tbody>
             <tr v-for="batch in section.batches" :key="batch.id" class="clickable" @click="selected = batch">
-              <td>{{ batch.product_name }}</td>
-              <td class="num">{{ batch.quantity }}</td>
-              <td class="nowrap">{{ formatDate(batch.expiration_date) }}</td>
-              <td class="muted">№ {{ batch.id }}</td>
-              <td class="actions">
+              <td class="cell-title">{{ batch.product_name }}</td>
+              <td class="num" data-label="Шт.">{{ batch.quantity }}</td>
+              <td class="nowrap" data-label="Годен до">{{ formatDate(batch.expiration_date) }}</td>
+              <td class="muted" data-label="Партия">№ {{ batch.id }}</td>
+              <td class="actions cell-arrow">
                 <button class="btn btn-secondary btn-small btn-icon" type="button" aria-label="Списать или продать" @click.stop="selected = batch">
                   <ChevronRight class="icon" :size="24" :stroke-width="1.75" />
                 </button>

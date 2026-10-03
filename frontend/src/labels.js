@@ -1,10 +1,16 @@
 // Русские названия для значений из базы.
 
 export const OPERATION_TITLES = {
-  delivery: 'Заморозка',
+  delivery: 'Поставка',
   defrost: 'Разморозка',
   sale: 'Продажа',
   write_off: 'Списание',
+}
+
+/** Куда ушла поставка: у поставки сразу в холодильник есть номер партии. */
+export function deliveryPlace(operation) {
+  if (operation.operation_type !== 'delivery') return ''
+  return operation.batch_id ? 'в холодильник' : 'в морозильник'
 }
 
 export const ROLE_TITLES = {

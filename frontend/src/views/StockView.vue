@@ -1,5 +1,6 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { Boxes, RefreshCw, Snowflake } from 'lucide-vue-next'
 import EmptyState from '../components/EmptyState.vue'
 import PageHeader from '../components/PageHeader.vue'
@@ -8,8 +9,10 @@ import { api } from '../api.js'
 import { formatDate } from '../dates.js'
 import { matches } from '../search.js'
 
+const route = useRoute()
+const router = useRouter()
 const data = ref(null)
-const tab = ref('fridge')
+const tab = ref(route.query.tab === 'freezer' ? 'freezer' : 'fridge')
 const query = ref('')
 
 const filter = (items) => items.filter((item) => matches(item.product_name, query.value))
@@ -24,11 +27,13 @@ async function load() {
   data.value = await api.get('/stock')
 }
 
+watch(tab, () => router.replace({ query: tab.value === 'freezer' ? { tab: 'freezer' } : {} }))
+
 onMounted(load)
 </script>
 
 <template>
-  <PageHeader title="Остатки" subtitle="Партии в холодильнике и запас в морозильнике">
+  <PageHeader title="Холодильник" subtitle="Партии в холодильнике и запас в морозильнике">
     <button class="btn btn-secondary" type="button" @click="load">
       <RefreshCw class="icon" :size="24" :stroke-width="1.75" /> Обновить
     </button>
@@ -46,14 +51,14 @@ onMounted(load)
     <section v-for="group in groups" :key="group.key" class="card" :class="group.tone">
       <div class="card-header"><h2>{{ group.title }}</h2><span class="muted">{{ group.items.length }} парт.</span></div>
       <div class="table-wrap">
-        <table class="table">
-          <thead><tr><th>Товар</th><th class="num">Шт.</th><th>Годен до</th><th>Разморожено</th></tr></thead>
+        <table class="table table-stack">
+          <thead><tr><th>Товар</th><th class="num">Шт.</th><th>Годен до</th><th>Добавлено</th></tr></thead>
           <tbody>
             <tr v-for="batch in group.items" :key="batch.id">
-              <td>{{ batch.product_name }}</td>
-              <td class="num">{{ batch.quantity }}</td>
-              <td class="nowrap">{{ formatDate(batch.expiration_date) }}</td>
-              <td class="nowrap muted">{{ formatDate(batch.date_added) }}</td>
+              <td class="cell-title">{{ batch.product_name }}</td>
+              <td class="num" data-label="Шт.">{{ batch.quantity }}</td>
+              <td class="nowrap" data-label="Годен до">{{ formatDate(batch.expiration_date) }}</td>
+              <td class="nowrap muted" data-label="Добавлено">{{ formatDate(batch.date_added) }}</td>
             </tr>
           </tbody>
         </table>
@@ -64,13 +69,13 @@ onMounted(load)
   <template v-if="data && tab === 'freezer'">
     <EmptyState v-if="!freezer.length" :icon="Snowflake" text="В морозильнике пусто" />
     <div v-else class="table-wrap">
-      <table class="table">
+      <table class="table table-stack">
         <thead><tr><th>Товар</th><th class="num">Шт.</th><th class="num">Хранится после разморозки</th></tr></thead>
         <tbody>
           <tr v-for="item in freezer" :key="item.id">
-            <td>{{ item.product_name }}</td>
-            <td class="num">{{ item.quantity }}</td>
-            <td class="num muted">{{ item.fridge_storage_time ? `${item.fridge_storage_time} дн.` : '—' }}</td>
+            <td class="cell-title">{{ item.product_name }}</td>
+            <td class="num" data-label="Шт.">{{ item.quantity }}</td>
+            <td class="num muted" data-label="После разморозки">{{ item.fridge_storage_time ? `${item.fridge_storage_time} дн.` : '—' }}</td>
           </tr>
         </tbody>
       </table>

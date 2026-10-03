@@ -63,13 +63,13 @@ onMounted(load)
   <template v-if="files">
     <EmptyState v-if="!files.length" :icon="DatabaseBackup" text="Копий пока нет" />
     <div v-else class="table-wrap">
-      <table class="table">
+      <table class="table table-stack">
         <thead><tr><th>Файл</th><th>Создана</th><th class="num">Размер</th><th /></tr></thead>
         <tbody>
           <tr v-for="file in files" :key="file.name">
-            <td>{{ file.name }}</td>
-            <td class="nowrap">{{ formatDateTime(file.created_at) }}</td>
-            <td class="num nowrap">{{ (file.size / 1024).toFixed(1) }} КБ</td>
+            <td class="cell-title">{{ file.name }}</td>
+            <td class="nowrap" data-label="Создана">{{ formatDateTime(file.created_at) }}</td>
+            <td class="num nowrap" data-label="Размер">{{ (file.size / 1024).toFixed(1) }} КБ</td>
             <td class="actions">
               <a class="btn btn-secondary btn-small" :href="`/api/admin/backups/${file.name}`" download>
                 <Download class="icon" :size="22" :stroke-width="1.75" /> Скачать

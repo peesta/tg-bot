@@ -62,14 +62,19 @@ def page_of(
 
 
 def catalog(db: Database) -> list[dict]:
-    """Справочник товаров с остатком в морозильнике, по названию."""
+    """Справочник товаров с остатками в морозильнике и холодильнике,
+    по названию."""
     with db.cursor() as cursor:
         cursor.execute(
             """
             SELECT products.rowid AS id, products.name,
                 products.fridge_storage_time, products.freezer_storage_time,
                 products.category,
-                COALESCE(freezer.quantity, 0) AS freezer_quantity
+                COALESCE(freezer.quantity, 0) AS freezer_quantity,
+                (
+                    SELECT COALESCE(SUM(fridge.quantity), 0) FROM fridge
+                    WHERE fridge.product_name = products.name
+                ) AS fridge_quantity
             FROM products
             LEFT JOIN freezer ON freezer.product_name = products.name
             ORDER BY products.name ASC

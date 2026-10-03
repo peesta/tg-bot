@@ -1,17 +1,18 @@
 import {
-  Boxes, DatabaseBackup, FileSpreadsheet, History, Hourglass, House,
-  PackageOpen, ReceiptText, ScrollText, Sheet, Snowflake, Tag, Users,
+  DatabaseBackup, FileSpreadsheet, History, Hourglass, House, PackageOpen,
+  Refrigerator, ScrollText, Sheet, ShoppingCart, Tag, Trash2, Truck, Users,
 } from 'lucide-vue-next'
 
-// lines — подпись в узком меню сотрудника, по строкам.
+// lines — подпись в узком меню сотрудника на планшете, по строкам.
 export const WORK_NAV = [
   { to: '/', label: 'Главная', lines: ['Главная'], icon: House, exact: true },
   { to: '/expiring', label: 'Скоро испортится', lines: ['Скоро', 'испортится'], icon: Hourglass, badge: true },
-  { to: '/defrost', label: 'Достать из заморозки', lines: ['Достать из', 'заморозки'], icon: PackageOpen },
-  { to: '/delivery', label: 'Добавить заморозку', lines: ['Добавить', 'заморозку'], icon: Snowflake },
-  { to: '/write-off', label: 'Списание и продажа', lines: ['Списание', 'и продажа'], icon: ReceiptText },
-  { to: '/stock', label: 'Остатки', lines: ['Остатки'], icon: Boxes },
-  { to: '/history', label: 'История списаний', lines: ['История', 'списаний'], icon: History },
+  { to: '/defrost', label: 'Разморозить', lines: ['Разморозить'], icon: PackageOpen },
+  { to: '/delivery', label: 'Поставка товара', lines: ['Поставка', 'товара'], icon: Truck },
+  { to: '/write-off', label: 'Списание', lines: ['Списание'], icon: Trash2 },
+  { to: '/sale', label: 'Продажа', lines: ['Продажа'], icon: ShoppingCart },
+  { to: '/stock', label: 'Холодильник', lines: ['Холодильник'], icon: Refrigerator },
+  { to: '/history', label: 'История операций', lines: ['История', 'операций'], icon: History },
 ]
 
 export const ADMIN_NAV = [

@@ -133,6 +133,42 @@ class StaffTest(ApiTestCase):
                 [("delivery", self.EMPLOYEE_ID), ("defrost", self.EMPLOYEE_ID)],
             )
 
+    def test_delivery_to_fridge(self):
+        product = next(item for item in self.client.get("/api/catalog").json() if item["name"] == "Медовик")
+        self.assertRegex(product["expires"], r"^\d{4}-\d{2}-\d{2}$")  # годен до, если сразу в холодильник
+        self.assertEqual(product["fridge_quantity"], 0)
+
+        response = self.client.post("/api/delivery", json={
+            "product_id": product["id"], "quantity": 3, "destination": "fridge",
+        })
+        result = response.json()
+        self.assertEqual((result["destination"], result["quantity"]), ("fridge", 3))
+        self.assertEqual(result["expiration_date"], product["expires"])
+
+        self.assertIsNone(self.db.get_freezer_product("Медовик"))  # морозильник не тронут
+        batch = self.db.get_fridge_batch(result["batch_id"])
+        self.assertEqual((batch["product_name"], batch["quantity"]), ("Медовик", 3))
+        self.assertEqual(self.client.get("/api/stock").json()["fresh"][0]["id"], result["batch_id"])
+        catalog = self.client.get("/api/catalog").json()
+        self.assertEqual(next(item for item in catalog if item["name"] == "Медовик")["fridge_quantity"], 3)
+
+        # В журнале — поставка с номером партии.
+        [row] = self.client.get("/api/history", params={"type": "delivery"}).json()["items"]
+        self.assertEqual((row["batch_id"], row["created_by"]), (result["batch_id"], self.EMPLOYEE_ID))
+
+        response = self.client.post("/api/delivery", json={
+            "product_id": product["id"], "quantity": 1, "destination": "shelf",
+        })
+        self.assertEqual(response.status_code, 422)
+
+    def test_delivery_to_freezer_by_default(self):
+        product_id = self.db.get_product("Медовик")["id"]
+        result = self.client.post("/api/delivery", json={"product_id": product_id, "quantity": 2}).json()
+        self.assertEqual((result["destination"], result["in_freezer"]), ("freezer", 2))
+        self.assertEqual(self.client.get("/api/stock").json()["fresh"], [])
+        [row] = self.client.get("/api/history").json()["items"]
+        self.assertIsNone(row["batch_id"])
+
     def test_defrost_more_than_stock_is_logged_error(self):
         self.db.new_delivery("Медовик", 2)
         product_id = self.db.get_freezer_product("Медовик")["id"]
@@ -155,9 +191,18 @@ class StaffTest(ApiTestCase):
         self.assertIn("Партия закрыта полностью", response.json()["message"])
         self.assertEqual(self.client.get(f"/api/batches/{batch_id}").status_code, 404)
 
-        history = self.client.get("/api/history").json()
+        history = self.client.get("/api/history", params={"type": "write_off"}).json()
         self.assertEqual(history["total"], 1)
         self.assertEqual(history["items"][0]["full_name"], "Сотрудник")
+        sales = self.client.get("/api/history", params={"type": "sale"}).json()
+        self.assertEqual([row["operation_type"] for row in sales["items"]], ["sale"])
+        # Без фильтра — все операции: поставка, разморозка, списание, продажа.
+        everything = self.client.get("/api/history").json()
+        self.assertEqual(
+            [row["operation_type"] for row in everything["items"]],
+            ["sale", "write_off", "defrost", "delivery"],
+        )
+        self.assertEqual(self.client.get("/api/history", params={"type": "nope"}).json()["total"], 4)
 
     def test_expiring_and_clear_all(self):
         self.make_batch("Медовик", 2, days=0)
@@ -299,7 +344,7 @@ class TablesTest(ApiTestCase):
         self.assertEqual(data["title"], "Холодильник")
         self.assertEqual(
             [column["label"] for column in data["columns"]],
-            ["№ партии", "Товар", "Количество, шт.", "Дата разморозки", "Годен до"],
+            ["№ партии", "Товар", "Количество, шт.", "Добавлено", "Годен до"],
         )
         kinds = {column["name"]: column["kind"] for column in data["columns"]}
         self.assertEqual(kinds["expiration_date"], "date")  # календарь на клиенте

@@ -50,7 +50,7 @@ onMounted(load)
 </script>
 
 <template>
-  <PageHeader title="Достать из заморозки" subtitle="Выберите товар — партия с датой «годен до» появится в холодильнике" />
+  <PageHeader title="Разморозить" subtitle="Выберите товар — партия с датой «годен до» появится в холодильнике" />
   <div class="toolbar"><SearchBox v-model="query" /></div>
 
   <template v-if="items">
@@ -63,7 +63,7 @@ onMounted(load)
       </button>
     </div>
     <EmptyState v-else-if="query" :icon="Search" :text="`По запросу «${query}» в морозильнике ничего нет`" />
-    <EmptyState v-else :icon="PackageOpen" text="В морозильнике нет продуктов. Добавьте их в разделе «Добавить заморозку»" />
+    <EmptyState v-else :icon="PackageOpen" text="В морозильнике нет продуктов. Добавьте их в разделе «Поставка товара»" />
   </template>
 
   <ModalDialog v-if="selected" :title="selected.product_name" @close="selected = null">

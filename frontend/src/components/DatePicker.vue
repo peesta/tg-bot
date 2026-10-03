@@ -15,7 +15,6 @@ const props = defineProps({
 // picked — дата выбрана, close — календарь закрыт без выбора.
 const emit = defineEmits(['picked', 'close'])
 
-const CALENDAR_WIDTH = 400
 const open = ref(false)
 const field = ref(null)
 const popup = ref(null)
@@ -28,8 +27,10 @@ const days = computed(() => monthMatrix(view.value.year, view.value.month))
 function place() {
   if (!field.value || !popup.value) return
   const rect = field.value.getBoundingClientRect()
+  // Ширина календаря — 400px, на телефоне — по ширине экрана (см. base.css).
+  const width = popup.value.offsetWidth
   const height = popup.value.offsetHeight
-  const left = Math.min(Math.max(rect.left, 8), window.innerWidth - CALENDAR_WIDTH - 8)
+  const left = Math.min(Math.max(rect.left, 8), window.innerWidth - width - 8)
   let top = rect.bottom + 8
   if (top + height > window.innerHeight - 8) top = Math.max(8, rect.top - height - 8)
   position.value = { top: `${top}px`, left: `${Math.max(left, 8)}px` }
