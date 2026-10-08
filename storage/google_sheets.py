@@ -1,7 +1,10 @@
 """Экспорт и импорт товаров, морозильника и холодильника в Google Таблицу.
 
-В таблице три листа с названиями как у таблиц базы: products, freezer,
-fridge. В первой строке листа — названия столбцов, как в базе.
+В таблице три листа на русском: «Товары», «Морозильник», «Холодильник».
+В первой строке листа — названия столбцов на русском, даты — ДД.ММ.ГГГГ.
+База при этом не меняется: в ней таблицы products, freezer, fridge.
+Листы и столбцы со старыми английскими названиями (как в базе) импорт
+тоже понимает, а экспорт переименовывает такие листы по-русски.
 
 Доступ — через сервисный аккаунт: ключ лежит в credentials.json, а самой
 таблице дан доступ «Редактор» для почты сервисного аккаунта.
@@ -25,12 +28,35 @@ from storage.db import Database
 
 CREDENTIALS_FILE = "credentials.json"
 
-# Столбцы каждого листа в порядке выгрузки.
-SHEET_COLUMNS = {
-    "products": ("name", "fridge_storage_time", "freezer_storage_time", "category"),
-    "freezer": ("product_name", "quantity"),
-    "fridge": ("id", "product_name", "quantity", "date_added", "expiration_date"),
+# Таблица базы → название листа в Google Таблице.
+SHEET_TITLES = {
+    "products": "Товары",
+    "freezer": "Морозильник",
+    "fridge": "Холодильник",
 }
+# Столбцы каждого листа в порядке выгрузки: столбец базы → заголовок
+# (как в разделе «База данных»).
+SHEET_COLUMNS = {
+    "products": {
+        "name": "Название",
+        "fridge_storage_time": "Срок после разморозки, дней",
+        "freezer_storage_time": "Срок в морозильнике, дней",
+        "category": "Категория",
+    },
+    "freezer": {
+        "product_name": "Товар",
+        "quantity": "Количество, шт.",
+    },
+    "fridge": {
+        "id": "№ партии",
+        "product_name": "Товар",
+        "quantity": "Количество, шт.",
+        "date_added": "Добавлено",
+        "expiration_date": "Годен до",
+    },
+}
+# В таблице даты — ДД.ММ.ГГГГ, в базе — ГГГГ-ММ-ДД.
+DATE_COLUMNS = ("date_added", "expiration_date")
 # Без этих столбцов лист не импортируется; остальные можно не заполнять.
 REQUIRED_COLUMNS = {
     "products": ("name", "fridge_storage_time"),
@@ -111,7 +137,7 @@ def open_spreadsheet(
     if not table:
         raise GoogleSheetsError(
             "Не задана таблица: добавьте в .env строку GOOGLE_TABLE со ссылкой "
-            "на Google Таблицу и перезапустите бота."
+            "на Google Таблицу и перезапустите сайт."
         )
     if not Path(credentials_file).is_file():
         raise GoogleSheetsError(
@@ -139,38 +165,65 @@ def open_spreadsheet(
             ) from error
 
 
-def _cell(value: object) -> object:
-    return "" if value is None else value
+def _cell(column: str, value: object) -> object:
+    """Значение из базы для ячейки: пусто вместо None, даты — ДД.ММ.ГГГГ."""
+    if value is None:
+        return ""
+    if column in DATE_COLUMNS:
+        match = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", str(value))
+        if match:
+            return f"{match[3]}.{match[2]}.{match[1]}"
+    return value
+
+
+def _find_worksheet(
+        spreadsheet: gspread.Spreadsheet,
+        table: str,
+    ) -> gspread.Worksheet | None:
+    """Лист таблицы базы: по-русски («Товары») или по-старому («products»)."""
+    for title in (SHEET_TITLES[table], table):
+        try:
+            return spreadsheet.worksheet(title)
+        except gspread.exceptions.WorksheetNotFound:
+            continue
+    return None
 
 
 def _worksheet(
         spreadsheet: gspread.Spreadsheet,
-        title: str,
+        table: str,
         rows: int,
         cols: int,
     ) -> gspread.Worksheet:
-    """Лист с нужным названием; если его нет — создаёт."""
-    try:
-        return spreadsheet.worksheet(title)
-    except gspread.exceptions.WorksheetNotFound:
+    """Лист для выгрузки. Старый лист («products») переименовывает
+    по-русски, чтобы в таблице не было двух листов с одним и тем же;
+    если листа нет — создаёт."""
+    title = SHEET_TITLES[table]
+    worksheet = _find_worksheet(spreadsheet, table)
+    if worksheet is None:
         return spreadsheet.add_worksheet(title=title, rows=rows, cols=cols)
+    if worksheet.title != title:
+        worksheet.update_title(title)
+    return worksheet
 
 
 def write_tables(
         spreadsheet: gspread.Spreadsheet,
         tables: dict[str, list[dict]],
     ) -> dict[str, int]:
-    """Стирает листы и записывает в них таблицы. Возвращает число строк."""
+    """Стирает листы и записывает в них таблицы. Возвращает число строк
+    по таблицам базы: {"products": …, "freezer": …, "fridge": …}."""
     counts = {}
-    for title, columns in SHEET_COLUMNS.items():
-        values = [list(columns)] + [
-            [_cell(row[column]) for column in columns]
-            for row in tables[title]
+    for table, headers in SHEET_COLUMNS.items():
+        columns = list(headers)
+        values = [list(headers.values())] + [
+            [_cell(column, row[column]) for column in columns]
+            for row in tables[table]
         ]
         # Запасная строка: Google не даёт закрепить все строки листа.
         rows_needed = len(values) + 1
         worksheet = _worksheet(
-            spreadsheet, title, max(rows_needed, 100), len(columns)
+            spreadsheet, table, max(rows_needed, 100), len(columns)
         )
         worksheet.clear()
         if worksheet.row_count < rows_needed or worksheet.col_count < len(columns):
@@ -184,19 +237,21 @@ def write_tables(
         header_range = f"A1:{gspread.utils.rowcol_to_a1(1, len(columns))}"
         worksheet.format(header_range, {"textFormat": {"bold": True}})
         worksheet.freeze(rows=1)
-        counts[title] = len(values) - 1
+        counts[table] = len(values) - 1
     return counts
 
 
 def read_tables(spreadsheet: gspread.Spreadsheet) -> dict[str, list[list[str]]]:
-    """Читает все значения листов products, freezer и fridge."""
+    """Читает все значения листов «Товары», «Морозильник» и «Холодильник»
+    (или старых products, freezer и fridge) по таблицам базы."""
     sheets = {}
     missing = []
-    for title in SHEET_COLUMNS:
-        try:
-            sheets[title] = spreadsheet.worksheet(title).get_all_values()
-        except gspread.exceptions.WorksheetNotFound:
+    for table, title in SHEET_TITLES.items():
+        worksheet = _find_worksheet(spreadsheet, table)
+        if worksheet is None:
             missing.append(title)
+        else:
+            sheets[table] = worksheet.get_all_values()
     if missing:
         raise ImportDataError(
             [f"В таблице нет листа «{title}»." for title in missing]
@@ -206,6 +261,26 @@ def read_tables(spreadsheet: gspread.Spreadsheet) -> dict[str, list[list[str]]]:
 
 def _clean_text(value: str) -> str:
     return " ".join(value.split())
+
+
+def _header_key(text: object) -> str:
+    """Заголовок для сравнения: без регистра, лишних пробелов и разницы е/ё."""
+    return _clean_text(str(text)).casefold().replace("ё", "е")
+
+
+def _column_aliases(table: str) -> dict[str, str]:
+    """Заголовки, которые понимает импорт: «Количество, шт.», «Количество»
+    и старое название столбца из базы («quantity»)."""
+    aliases = {}
+    for column, header in SHEET_COLUMNS[table].items():
+        for text in (header, header.split(",")[0], column):
+            aliases[_header_key(text)] = column
+    return aliases
+
+
+def _label(table: str, column: str) -> str:
+    """«Количество, шт.» — как столбец называется в таблице."""
+    return f"«{SHEET_COLUMNS[table][column]}»"
 
 
 def _positive_int(value: str) -> int | None:
@@ -229,21 +304,25 @@ def _date(value: str) -> str | None:
 
 
 def _sheet_rows(
-        title: str,
+        table: str,
         values: list[list[str]],
         errors: list[str],
     ) -> list[tuple[int, dict[str, str]]]:
-    """Непустые строки листа: (номер строки в таблице, {столбец: значение})."""
+    """Непустые строки листа: (номер строки в таблице, {столбец базы: значение})."""
+    title = SHEET_TITLES[table]
     if not values or not any(str(cell).strip() for cell in values[0]):
         errors.append(
             f"{title}: лист пуст — в первой строке должны быть названия столбцов."
         )
         return []
 
-    header = [str(cell).strip().lower() for cell in values[0]]
-    missing = [column for column in REQUIRED_COLUMNS[title] if column not in header]
+    aliases = _column_aliases(table)
+    # Столбец базы для каждого столбца листа; None — чужой столбец (пропускается).
+    header = [aliases.get(_header_key(cell)) for cell in values[0]]
+    missing = [column for column in REQUIRED_COLUMNS[table] if column not in header]
     if missing:
-        errors.append(f"{title}: нет столбцов {', '.join(missing)}.")
+        names = ", ".join(_label(table, column) for column in missing)
+        errors.append(f"{title}: нет столбцов {names}.")
         return []
 
     rows = []
@@ -253,7 +332,7 @@ def _sheet_rows(
         record = {
             column: str(row[index]).strip() if index < len(row) else ""
             for index, column in enumerate(header)
-            if column in SHEET_COLUMNS[title]
+            if column
         }
         rows.append((number, record))
     return rows
@@ -266,14 +345,14 @@ def _parse_products(
     products = []
     seen: dict[str, int] = {}
     for number, record in _sheet_rows("products", values, errors):
-        where = f"products, строка {number}"
+        where = f"{SHEET_TITLES['products']}, строка {number}"
         name = _clean_text(record.get("name", ""))
         fridge_days = _positive_int(record.get("fridge_storage_time", ""))
         freezer_text = record.get("freezer_storage_time", "")
         freezer_days = _positive_int(freezer_text) if freezer_text else None
 
         if not name:
-            errors.append(f"{where}: не указано название (name).")
+            errors.append(f"{where}: не указано название ({_label('products', 'name')}).")
         elif name.casefold() in seen:
             errors.append(
                 f"{where}: товар «{name}» уже есть в строке {seen[name.casefold()]}."
@@ -282,13 +361,13 @@ def _parse_products(
             seen[name.casefold()] = number
         if fridge_days is None:
             errors.append(
-                f"{where}: fridge_storage_time — срок хранения после "
-                "разморозки в днях, целое число больше нуля."
+                f"{where}: {_label('products', 'fridge_storage_time')} — срок "
+                "хранения после разморозки в днях, целое число больше нуля."
             )
         if freezer_text and freezer_days is None:
             errors.append(
-                f"{where}: freezer_storage_time — целое число больше нуля "
-                "или пустая ячейка."
+                f"{where}: {_label('products', 'freezer_storage_time')} — целое "
+                "число больше нуля или пустая ячейка."
             )
 
         products.append({
@@ -308,23 +387,23 @@ def _parse_freezer(
     freezer = []
     seen: dict[str, int] = {}
     for number, record in _sheet_rows("freezer", values, errors):
-        where = f"freezer, строка {number}"
+        where = f"{SHEET_TITLES['freezer']}, строка {number}"
         name = _clean_text(record.get("product_name", ""))
         quantity = _positive_int(record.get("quantity", ""))
 
         if not name:
-            errors.append(f"{where}: не указан товар (product_name).")
+            errors.append(f"{where}: не указан товар ({_label('freezer', 'product_name')}).")
         elif name in seen:
             errors.append(f"{where}: товар «{name}» уже есть в строке {seen[name]}.")
         elif name not in product_names:
             errors.append(
-                f"{where}: товара «{name}» нет на листе products — без него "
-                "товар нельзя будет разморозить."
+                f"{where}: товара «{name}» нет на листе «{SHEET_TITLES['products']}» "
+                "— без него товар нельзя будет разморозить."
             )
         else:
             seen[name] = number
         if quantity is None:
-            errors.append(f"{where}: quantity — целое число больше нуля.")
+            errors.append(f"{where}: {_label('freezer', 'quantity')} — целое число больше нуля.")
 
         freezer.append({"product_name": name, "quantity": quantity})
     return freezer
@@ -338,7 +417,7 @@ def _parse_fridge(
     seen: dict[int, int] = {}
     today = datetime.now().strftime("%Y-%m-%d")
     for number, record in _sheet_rows("fridge", values, errors):
-        where = f"fridge, строка {number}"
+        where = f"{SHEET_TITLES['fridge']}, строка {number}"
         id_text = record.get("id", "")
         batch_id = _positive_int(id_text) if id_text else None
         name = _clean_text(record.get("product_name", ""))
@@ -348,24 +427,27 @@ def _parse_fridge(
         expiration_date = _date(record.get("expiration_date", ""))
 
         if id_text and batch_id is None:
-            errors.append(f"{where}: id — целое число больше нуля или пустая ячейка.")
+            errors.append(
+                f"{where}: {_label('fridge', 'id')} — целое число больше нуля "
+                "или пустая ячейка."
+            )
         elif batch_id is not None and batch_id in seen:
             errors.append(f"{where}: партия с id {batch_id} уже есть в строке {seen[batch_id]}.")
         elif batch_id is not None:
             seen[batch_id] = number
         if not name:
-            errors.append(f"{where}: не указан товар (product_name).")
+            errors.append(f"{where}: не указан товар ({_label('fridge', 'product_name')}).")
         if quantity is None:
-            errors.append(f"{where}: quantity — целое число больше нуля.")
+            errors.append(f"{where}: {_label('fridge', 'quantity')} — целое число больше нуля.")
         if date_added is None:
             errors.append(
-                f"{where}: date_added — дата в формате ГГГГ-ММ-ДД или "
-                "ДД.ММ.ГГГГ, либо пустая ячейка (тогда сегодня)."
+                f"{where}: {_label('fridge', 'date_added')} — дата в формате "
+                "ДД.ММ.ГГГГ или ГГГГ-ММ-ДД, либо пустая ячейка (тогда сегодня)."
             )
         if expiration_date is None:
             errors.append(
-                f"{where}: expiration_date — дата в формате ГГГГ-ММ-ДД "
-                "или ДД.ММ.ГГГГ."
+                f"{where}: {_label('fridge', 'expiration_date')} — дата в формате "
+                "ДД.ММ.ГГГГ или ГГГГ-ММ-ДД."
             )
         elif date_added is not None and expiration_date < date_added:
             errors.append(f"{where}: срок годности раньше даты добавления.")
@@ -402,7 +484,8 @@ def export_to_google(
         table: str | None,
         credentials_file: str = CREDENTIALS_FILE,
     ) -> dict[str, int]:
-    """Перезаписывает листы products, freezer и fridge данными из базы."""
+    """Перезаписывает листы «Товары», «Морозильник» и «Холодильник»
+    данными из базы."""
     spreadsheet = open_spreadsheet(table, credentials_file)
     with _google_errors(credentials_file):
         return write_tables(spreadsheet, db.stock_tables())
@@ -412,6 +495,7 @@ def import_from_google(
         db: Database,
         table: str | None,
         credentials_file: str = CREDENTIALS_FILE,
+        user_id: int | None = None,
     ) -> tuple[dict[str, int], str]:
     """Заменяет товары, морозильник и холодильник в базе данными из таблицы.
 
@@ -429,5 +513,5 @@ def import_from_google(
         / f"before_import_{datetime.now():%Y-%m-%d_%H-%M-%S}.db"
     )
     db.backup(backup_path)
-    db.replace_stock_tables(**tables)
+    db.replace_stock_tables(**tables, user_id=user_id)
     return {title: len(rows) for title, rows in tables.items()}, backup_path
