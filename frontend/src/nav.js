@@ -2,6 +2,7 @@ import {
   DatabaseBackup, FileSpreadsheet, History, Hourglass, House, PackageOpen,
   Refrigerator, ScrollText, Sheet, ShoppingCart, Tag, Trash2, Truck, Users,
 } from 'lucide-vue-next'
+import { BROWSER_BACKEND } from './api.js'
 
 // lines — подпись в узком меню сотрудника на планшете, по строкам.
 export const WORK_NAV = [
@@ -22,4 +23,5 @@ export const ADMIN_NAV = [
   { to: '/admin/logs', label: 'Логи', icon: ScrollText },
   { to: '/admin/google', label: 'Google Таблица', icon: FileSpreadsheet },
   { to: '/admin/backups', label: 'Резервные копии', icon: DatabaseBackup },
-]
+// В браузерной версии (Cloudflare Pages) до Google Таблицы не достучаться.
+].filter((item) => !(BROWSER_BACKEND && item.to === '/admin/google'))

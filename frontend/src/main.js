@@ -4,4 +4,7 @@ import './styles/base.css'
 import App from './App.vue'
 import { router } from './router.js'
 
-createApp(App).use(router).mount('#app')
+// Пока открывается первая страница, в #app видна заставка из index.html
+// (в браузерной версии в это время загружается Python и база).
+const app = createApp(App).use(router)
+router.isReady().then(() => app.mount('#app'))

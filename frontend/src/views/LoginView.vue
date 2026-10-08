@@ -1,9 +1,9 @@
 <script setup>
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { LogIn, Snowflake } from 'lucide-vue-next'
-import { api } from '../api.js'
-import { store } from '../store.js'
+import { LogIn, RotateCcw, Snowflake } from 'lucide-vue-next'
+import { api, BROWSER_BACKEND, resetBrowserDatabase } from '../api.js'
+import { confirmAction, store } from '../store.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -25,6 +25,16 @@ async function submit() {
   } finally {
     sending.value = false
   }
+}
+
+async function resetDatabase() {
+  const ok = await confirmAction({
+    title: 'Вернуть начальные данные?',
+    message: 'Все изменения, сделанные в этом браузере, будут стёрты: товары, остатки, сотрудники, журналы и копии базы.',
+    confirmText: 'Стереть и начать заново',
+    danger: true,
+  })
+  if (ok) await resetBrowserDatabase()
 }
 </script>
 
@@ -49,6 +59,12 @@ async function submit() {
         <LogIn class="icon" :size="24" :stroke-width="1.75" /> Войти
       </button>
       <p class="muted">Регистрации нет: учётную запись выдаёт администратор.</p>
+      <template v-if="BROWSER_BACKEND">
+        <p class="muted">Демо-версия: база хранится в этом браузере, другие посетители ваших изменений не видят.</p>
+        <button class="btn btn-ghost btn-block" type="button" @click="resetDatabase">
+          <RotateCcw class="icon" :size="24" :stroke-width="1.75" /> Вернуть начальные данные
+        </button>
+      </template>
     </form>
   </main>
 </template>

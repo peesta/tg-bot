@@ -40,6 +40,14 @@ async function restore(file) {
   }
 }
 
+async function download(file) {
+  try {
+    await api.download(`/admin/backups/${file.name}`, file.name)
+  } catch (error) {
+    toast(error.message, 'error')
+  }
+}
+
 async function remove(file) {
   const ok = await confirmAction({ title: `Удалить копию ${file.name}?`, confirmText: 'Удалить', danger: true })
   if (!ok) return
@@ -71,9 +79,9 @@ onMounted(load)
             <td class="nowrap" data-label="Создана">{{ formatDateTime(file.created_at) }}</td>
             <td class="num nowrap" data-label="Размер">{{ (file.size / 1024).toFixed(1) }} КБ</td>
             <td class="actions">
-              <a class="btn btn-secondary btn-small" :href="`/api/admin/backups/${file.name}`" download>
+              <button class="btn btn-secondary btn-small" type="button" @click="download(file)">
                 <Download class="icon" :size="22" :stroke-width="1.75" /> Скачать
-              </a>
+              </button>
               <button class="btn btn-warning btn-small" type="button" @click="restore(file)">
                 <RotateCcw class="icon" :size="22" :stroke-width="1.75" /> Восстановить
               </button>
