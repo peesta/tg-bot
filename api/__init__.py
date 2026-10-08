@@ -101,7 +101,13 @@ def _who(request: Request) -> str:
     return f"{request.method} {request.url.path}, сотрудник № {user_id}"
 
 
-def _log_error(db: Database, error_type: str, message: str) -> None:
+def _log_error(request: Request, db: Database, error_type: str, message: str) -> None:
+    """Ошибка в таблицу errors — только если запрос от вошедшего
+    сотрудника. Иначе любой из интернета мог бы без входа раздувать базу
+    кривыми запросами; такие ошибки остаются в журнале сервера."""
+    if getattr(request.state, "user", None) is None:
+        logger.info("Ошибка без входа (%s): %s", error_type, message.replace("\n", "; "))
+        return
     try:
         db.log_error(error_type, message)
     except Exception:
@@ -112,21 +118,22 @@ def _add_error_handlers(app: FastAPI, db: Database) -> None:
     """Все ошибки пишутся в таблицу errors и в журнал сервера.
 
     Не пишутся только «войдите на сайт» (401) и «нет такой страницы» (404):
-    это не ошибки, а обычная работа сайта.
+    это не ошибки, а обычная работа сайта. Ошибки запросов без входа
+    пишутся только в журнал сервера (см. _log_error).
     """
 
     @app.exception_handler(ValueError)
     async def value_error(request: Request, error: ValueError):
         # Отказ базы или проверки: недостаточно товара, занятый логин и т.п.
         logger.warning("Отказ: %s (%s)", error, _who(request))
-        _log_error(db, "ValueError", f"{error}\n{_who(request)}")
+        _log_error(request, db, "ValueError", f"{error}\n{_who(request)}")
         return JSONResponse({"detail": str(error)}, status_code=400)
 
     @app.exception_handler(StarletteHTTPException)
     async def http_error(request: Request, error: StarletteHTTPException):
         if error.status_code not in (401, 404):
             logger.warning("HTTP %s: %s (%s)", error.status_code, error.detail, _who(request))
-            _log_error(db, f"HTTP {error.status_code}", f"{error.detail}\n{_who(request)}")
+            _log_error(request, db, f"HTTP {error.status_code}", f"{error.detail}\n{_who(request)}")
         return JSONResponse({"detail": error.detail}, status_code=error.status_code)
 
     @app.exception_handler(RequestValidationError)
@@ -136,14 +143,14 @@ def _add_error_handlers(app: FastAPI, db: Database) -> None:
             for item in error.errors()
         )
         detail = f"Неверно заполнены поля: {fields}"
-        _log_error(db, "RequestValidationError", f"{detail}\n{_who(request)}")
+        _log_error(request, db, "RequestValidationError", f"{detail}\n{_who(request)}")
         return JSONResponse({"detail": detail}, status_code=422)
 
     @app.exception_handler(Exception)
     async def server_error(request: Request, error: Exception):
         logger.error("Ошибка при обработке %s", request.url.path, exc_info=error)
         _log_error(
-            db, type(error).__name__,
+            request, db, type(error).__name__,
             f"{_who(request)}\n" + "".join(traceback.format_exception(error)),
         )
         return JSONResponse(

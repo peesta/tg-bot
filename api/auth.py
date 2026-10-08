@@ -1,6 +1,7 @@
 """Вход, выход и смена своего пароля. Регистрации нет: сотрудников
 добавляет администратор, при первом запуске есть admin и employee."""
 import logging
+import secrets
 import threading
 import time
 
@@ -8,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from api.deps import current_user, get_accounts, public_user, session_token
-from storage.accounts import Accounts, check_password
+from storage.accounts import Accounts, check_password, hash_password
 
 
 router = APIRouter(tags=["auth"])
@@ -37,17 +38,23 @@ def password_error(password: str) -> str | None:
 
 
 class LoginLimiter:
-    """Не даёт перебирать пароли: после MAX_FAILURES неудачных попыток
-    вход с того же адреса под тем же логином закрыт на BLOCK_SECONDS."""
+    """Не даёт перебирать пароли. С одного адреса за BLOCK_SECONDS можно
+    ошибиться MAX_FAILURES раз под одним логином и MAX_ADDRESS_FAILURES
+    раз под всеми логинами вместе (иначе перебирают пароли по всем
+    логинам подряд). Дальше вход с адреса закрыт, пока старые попытки
+    не выйдут из окна."""
 
     MAX_FAILURES = 5
+    MAX_ADDRESS_FAILURES = 20
     BLOCK_SECONDS = 300
+    # Сколько записей хранить, прежде чем вычищать устаревшие.
+    MAX_KEYS = 10_000
 
     def __init__(self) -> None:
-        self.failures: dict[tuple[str, str], list[float]] = {}
+        self.failures: dict[tuple, list[float]] = {}
         self._lock = threading.Lock()
 
-    def _recent(self, key: tuple[str, str], now: float) -> list[float]:
+    def _recent(self, key: tuple, now: float) -> list[float]:
         attempts = [
             moment for moment in self.failures.get(key, [])
             if now - moment < self.BLOCK_SECONDS
@@ -58,60 +65,81 @@ class LoginLimiter:
             self.failures.pop(key, None)
         return attempts
 
-    def seconds_left(self, key: tuple[str, str]) -> int:
+    def _wait(self, key: tuple, limit: int, now: float) -> int:
+        attempts = self._recent(key, now)
+        if len(attempts) < limit:
+            return 0
+        return int(self.BLOCK_SECONDS - (now - attempts[-limit])) + 1
+
+    def seconds_left(self, ip: str, username: str) -> int:
         now = time.monotonic()
         with self._lock:
-            attempts = self._recent(key, now)
-            if len(attempts) < self.MAX_FAILURES:
-                return 0
-            return int(self.BLOCK_SECONDS - (now - attempts[0])) + 1
+            return max(
+                self._wait((ip, username), self.MAX_FAILURES, now),
+                self._wait((ip,), self.MAX_ADDRESS_FAILURES, now),
+            )
 
-    def fail(self, key: tuple[str, str]) -> None:
+    def fail(self, ip: str, username: str) -> None:
         now = time.monotonic()
         with self._lock:
-            self._recent(key, now)
-            self.failures.setdefault(key, []).append(now)
+            if len(self.failures) > self.MAX_KEYS:
+                for key in list(self.failures):
+                    self._recent(key, now)
+            for key in ((ip, username), (ip,)):
+                self._recent(key, now)
+                self.failures.setdefault(key, []).append(now)
 
-    def reset(self, key: tuple[str, str]) -> None:
+    def reset(self, ip: str, username: str) -> None:
+        """Удачный вход прощает ошибки под этим логином, но не общий счёт
+        адреса: иначе его сбрасывали бы входом в свою учётную запись."""
         with self._lock:
-            self.failures.pop(key, None)
+            self.failures.pop((ip, username), None)
 
 
 limiter = LoginLimiter()
+# Для несуществующего логина пароль сверяется с этим хешем: ответ идёт
+# столько же, сколько для настоящего, и по времени не понять, есть ли логин.
+DUMMY_PASSWORD_HASH = hash_password(secrets.token_hex(16))
 
 
 @router.post("/auth/login")
 def login(form: LoginForm, request: Request, accounts: Accounts = Depends(get_accounts)):
     username = form.username.strip()
     ip = request.client.host if request.client else ""
-    key = (ip, username.casefold())
+    login_key = username.casefold()
 
-    wait = limiter.seconds_left(key)
+    wait = limiter.seconds_left(ip, login_key)
     if wait:
         raise HTTPException(
             429, f"Слишком много неудачных попыток. Попробуйте через {max(wait // 60, 1)} мин."
         )
 
     user = accounts.get_by_username(username) if username else None
-    if user is None or not check_password(user["password_hash"], form.password):
-        limiter.fail(key)
+    password_hash = user["password_hash"] if user else DUMMY_PASSWORD_HASH
+    if not check_password(password_hash, form.password) or user is None:
+        limiter.fail(ip, login_key)
         logger.warning("Неудачный вход: логин %r, адрес %s", username, ip)
         raise HTTPException(401, "Неверный логин или пароль")
     if not user["is_active"]:
         logger.warning("Вход отключённого сотрудника %r, адрес %s", username, ip)
         raise HTTPException(403, "Доступ отключён. Обратитесь к администратору")
 
-    limiter.reset(key)
+    limiter.reset(ip, login_key)
+    accounts.delete_session(request.session.get("sid"))
     request.session.clear()
     request.session["user_id"] = user["id"]
     request.session["auth"] = session_token(user)
+    request.session["sid"] = accounts.create_session(user["id"])
     accounts.touch_login(user["id"])
     logger.info("Вход: %s (№ %s), адрес %s", user["username"], user["id"], ip)
     return public_user(user)
 
 
 @router.post("/auth/logout")
-def logout(request: Request):
+def logout(request: Request, accounts: Accounts = Depends(get_accounts)):
+    # Сессия удаляется из базы: сохранённая где-то копия cookie больше
+    # не действует.
+    accounts.delete_session(request.session.get("sid"))
     request.session.clear()
     return {"ok": True}
 

@@ -8,7 +8,7 @@
 import hashlib
 import hmac
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from storage.db import Database
 
@@ -20,6 +20,11 @@ CREATE TABLE IF NOT EXISTS accounts (
     password_hash TEXT NOT NULL,
     last_login TEXT
 );
+CREATE TABLE IF NOT EXISTS sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    last_seen TEXT NOT NULL
+);
 """
 
 # Учётные записи при первом запуске: логин, пароль, имя, роль.
@@ -29,6 +34,12 @@ DEFAULT_ACCOUNTS = (
 )
 
 SCRYPT_N, SCRYPT_R, SCRYPT_P = 2 ** 14, 8, 1
+
+# Сессия без запросов дольше этого срока закрывается.
+SESSION_HOURS = 12
+# last_seen обновляется не чаще, чтобы не писать в базу на каждый запрос.
+SESSION_TOUCH_MINUTES = 5
+TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 USER_FIELDS = """
     users.telegram_id AS id, users.full_name, users.role, users.is_active,
@@ -54,6 +65,11 @@ def check_password(password_hash: str | None, password: str) -> bool:
     except ValueError:
         return False
     return hmac.compare_digest(digest.hex(), expected)
+
+
+def _token_hash(token: str) -> str:
+    """В базе (и в её копиях) хранится не сам ключ сессии, а его хеш."""
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 def _user(row) -> dict | None:
@@ -208,6 +224,56 @@ class Accounts:
                 "UPDATE accounts SET last_login = ? WHERE user_id = ?",
                 (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), user_id),
             )
+
+    # ---------- Сессии ----------
+
+    def create_session(self, user_id: int) -> str:
+        """Новая сессия после входа; возвращает ключ для cookie."""
+        token = secrets.token_urlsafe(32)
+        now = datetime.now()
+        with self.db.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM sessions WHERE last_seen < ?",
+                ((now - timedelta(hours=SESSION_HOURS)).strftime(TIME_FORMAT),),
+            )
+            cursor.execute(
+                "INSERT INTO sessions (token_hash, user_id, last_seen) VALUES (?, ?, ?)",
+                (_token_hash(token), user_id, now.strftime(TIME_FORMAT)),
+            )
+        return token
+
+    def session_user_id(self, token: str | None) -> int | None:
+        """Сотрудник по ключу сессии или None, если сессия закрыта или
+        устарела. Продлевает сессию, пока ею пользуются."""
+        if not token:
+            return None
+        now = datetime.now()
+        with self.db.cursor() as cursor:
+            cursor.execute(
+                "SELECT user_id, last_seen FROM sessions WHERE token_hash = ?",
+                (_token_hash(token),),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            last_seen = datetime.strptime(row["last_seen"], TIME_FORMAT)
+            if now - last_seen > timedelta(hours=SESSION_HOURS):
+                cursor.execute(
+                    "DELETE FROM sessions WHERE token_hash = ?", (_token_hash(token),)
+                )
+                return None
+            if now - last_seen > timedelta(minutes=SESSION_TOUCH_MINUTES):
+                cursor.execute(
+                    "UPDATE sessions SET last_seen = ? WHERE token_hash = ?",
+                    (now.strftime(TIME_FORMAT), _token_hash(token)),
+                )
+            return row["user_id"]
+
+    def delete_session(self, token: str | None) -> None:
+        if not token:
+            return
+        with self.db.cursor() as cursor:
+            cursor.execute("DELETE FROM sessions WHERE token_hash = ?", (_token_hash(token),))
 
     def create_defaults(self) -> bool:
         """Создаёт admin/admin и employee/employee, если войти пока некому."""

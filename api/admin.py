@@ -341,7 +341,9 @@ def backup_download(name: str, db: Database = Depends(get_db)):
 
 def _keep_logs(db: Database, saved_path: Path) -> None:
     """Журналы не откатываются вместе с базой: записи, сделанные после
-    копии, переносятся из базы, сохранённой перед восстановлением."""
+    копии, переносятся из базы, сохранённой перед восстановлением.
+    Сессии тоже берутся из неё: восстановление не выкидывает вошедших
+    и не возвращает сессии, закрытые кнопкой «Выйти»."""
     connection = sqlite3.connect(db.path_to_db)
     try:
         connection.execute("ATTACH DATABASE ? AS saved", (str(saved_path),))
@@ -355,6 +357,11 @@ def _keep_logs(db: Database, saved_path: Path) -> None:
                 f"INSERT INTO main.{table} ({names}) SELECT {names} FROM saved.{table} "
                 f"WHERE id > (SELECT COALESCE(MAX(id), 0) FROM main.{table})"
             )
+        connection.execute("DELETE FROM main.sessions")
+        connection.execute(
+            "INSERT INTO main.sessions (token_hash, user_id, last_seen) "
+            "SELECT token_hash, user_id, last_seen FROM saved.sessions"
+        )
         connection.commit()
         connection.execute("DETACH DATABASE saved")
     finally:
@@ -381,8 +388,9 @@ def backup_restore(name: str, user: dict = Depends(admin_user), db: Database = D
 
     # Копия может быть старой: создаём недостающие таблицы и учётные записи.
     Database(db.path_to_db)
+    accounts = Accounts(db)
     _keep_logs(db, _backup_dir(db) / saved)
-    Accounts(db).create_defaults()
+    accounts.create_defaults()
     db.log_change("backup_restored", f"{name} (база до восстановления — {saved})", user["id"])
     return {"saved": saved}
 

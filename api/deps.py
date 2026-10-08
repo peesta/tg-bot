@@ -27,12 +27,13 @@ def session_token(user: dict) -> str:
 
 
 def current_user(request: Request, accounts: Accounts = Depends(get_accounts)) -> dict:
-    """Вошедший сотрудник. Отключённого или сменившего пароль сразу
-    выкидывает с сайта."""
+    """Вошедший сотрудник. Отключённого, сменившего пароль или нажавшего
+    «Выйти» (сессия удалена из базы) сразу выкидывает с сайта."""
     user_id = request.session.get("user_id")
     user = accounts.get(user_id) if user_id is not None else None
     if (
         user is None
+        or accounts.session_user_id(request.session.get("sid")) != user["id"]
         or not user["is_active"]
         or not user["password_hash"]
         or not secrets.compare_digest(
@@ -41,6 +42,8 @@ def current_user(request: Request, accounts: Accounts = Depends(get_accounts)) -
     ):
         request.session.clear()
         raise HTTPException(401, "Войдите на сайт")
+    # По нему обработчики ошибок отличают сотрудников от анонимных запросов.
+    request.state.user = user
     return user
 
 

@@ -115,8 +115,12 @@ class Database:
 
     @contextmanager
     def cursor(self) -> Iterator[sqlite3.Cursor]:
+        """Курсор в одной транзакции. BEGIN IMMEDIATE сразу занимает базу
+        на запись: два одновременных запроса не прочитают один и тот же
+        остаток (иначе из партии в 5 шт. можно продать 10)."""
         connection = self.get_conn()
         cursor = connection.cursor()
+        cursor.execute("BEGIN IMMEDIATE")
         try:
             yield cursor
             connection.commit()
